@@ -53,6 +53,8 @@ pub enum IpcError {
 }
 
 /// Reads one line of JSON from `reader`, refusing messages over the size limit.
+// Only the Windows pipe transport frames messages; elsewhere there is no service.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn read_message<T: serde::de::DeserializeOwned>(
     reader: impl std::io::Read,
 ) -> Result<T, IpcError> {
@@ -68,6 +70,7 @@ pub(crate) fn read_message<T: serde::de::DeserializeOwned>(
     serde_json::from_str(&line).map_err(|e| IpcError::Protocol(e.to_string()))
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn write_message(
     mut writer: impl std::io::Write,
     message: &impl serde::Serialize,

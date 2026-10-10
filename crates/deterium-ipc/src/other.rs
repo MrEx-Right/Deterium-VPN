@@ -14,6 +14,10 @@ impl Client {
     pub fn call(&self, _request: &Request) -> Result<Response, IpcError> {
         Err(IpcError::Unavailable)
     }
+
+    pub fn handshake(&self) -> Result<(), IpcError> {
+        Err(IpcError::Unavailable)
+    }
 }
 
 impl Default for Client {

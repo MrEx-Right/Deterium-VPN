@@ -21,6 +21,7 @@ use deterium_core::ServerProfile;
 const PREFIX: &str = "dpapi:v1:";
 /// Binds ciphertext to this application's format, so a blob protected for
 /// some other purpose by the same user isn't accepted as a profile secret.
+#[cfg_attr(not(windows), allow(dead_code))] // DPAPI is the only user
 const ENTROPY: &[u8] = b"Deterium profile secret v1";
 
 #[derive(Debug, thiserror::Error)]
@@ -224,7 +225,9 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deterium_core::import::{parse_openvpn, parse_wireguard_conf};
+    #[cfg(windows)]
+    use deterium_core::import::parse_openvpn;
+    use deterium_core::import::parse_wireguard_conf;
 
     const CONF: &str = "[Interface]\nPrivateKey = AHuqsk/lVEUcMCJKwoyy9tSu6TUJba1CyfmMJ8OHzGw=\nAddress = 10.6.0.2/32\n[Peer]\nPublicKey = hNB8xHQbFgfPavZ3NEhjv5+SRZ6TESr65wrlc71XuxA=\nPresharedKey = rJ7Pb5Ej25Q/LET9w856N4pej7pF4+UT7BSdLnfsKmo=\nEndpoint = 1.2.3.4:51820\nAllowedIPs = 10.6.0.0/24\n";
     const KEY: &str = "AHuqsk/lVEUcMCJKwoyy9tSu6TUJba1CyfmMJ8OHzGw=";

@@ -116,7 +116,7 @@ pub fn power_button(
             painter.circle_stroke(
                 center,
                 radius + 10.0 + phase * 74.0,
-                Stroke::new(2.0, with_alpha(color, ((1.0 - phase) * 80.0) as u8)),
+                Stroke::new(2.0_f32, with_alpha(color, ((1.0 - phase) * 80.0) as u8)),
             );
         }
     }
@@ -130,7 +130,7 @@ pub fn power_button(
     painter.circle_stroke(
         center,
         radius,
-        Stroke::new(3.0, with_alpha(color, if enabled { 255 } else { 90 })),
+        Stroke::new(3.0_f32, with_alpha(color, if enabled { 255 } else { 90 })),
     );
 
     if view.spinning {
@@ -138,16 +138,16 @@ pub fn power_button(
         painter.circle_stroke(
             center,
             radius + 14.0,
-            Stroke::new(1.0, with_alpha(color, 50)),
+            Stroke::new(1.0_f32, with_alpha(color, 50)),
         );
         painter.add(Shape::line(
             arc_points(center, radius + 14.0, start, start + 110.0, 36),
-            Stroke::new(4.0, color),
+            Stroke::new(4.0_f32, color),
         ));
     }
 
     let icon_radius = radius * 0.42;
-    let icon_stroke = Stroke::new(5.5, color);
+    let icon_stroke = Stroke::new(5.5_f32, color);
     painter.add(Shape::line(
         arc_points(center, icon_radius, -55.0, 235.0, 48),
         icon_stroke,
@@ -185,7 +185,7 @@ pub fn server_row(
         let painter = ui.painter();
         painter.rect_filled(rect, 12.0, fill);
         if selected {
-            painter.rect_stroke(rect, 12.0, Stroke::new(1.0, with_alpha(ACCENT, 120)));
+            painter.rect_stroke(rect, 12.0, Stroke::new(1.0_f32, with_alpha(ACCENT, 120)));
         }
 
         painter.circle_filled(pos2(rect.left() + 18.0, rect.center().y), 5.0, dot);
@@ -249,7 +249,7 @@ pub fn add_row(ui: &mut egui::Ui) -> egui::Response {
         painter.rect_stroke(
             rect,
             12.0,
-            Stroke::new(1.0, with_alpha(ACCENT, if hovered { 170 } else { 80 })),
+            Stroke::new(1.0_f32, with_alpha(ACCENT, if hovered { 170 } else { 80 })),
         );
         painter.text(
             rect.center(),

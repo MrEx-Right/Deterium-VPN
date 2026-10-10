@@ -109,8 +109,8 @@ pub fn apply_style(ctx: &egui::Context) {
     ] {
         state.fg_stroke.color = TEXT;
     }
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
     visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(30, 36, 54);
     visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(38, 46, 70);
     visuals.selection.bg_fill = with_alpha(ACCENT, 90);
@@ -129,7 +129,7 @@ pub fn apply_style(ctx: &egui::Context) {
 pub fn card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::none()
         .fill(with_alpha(CARD, 215))
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .rounding(14.0)
         .inner_margin(Margin::symmetric(18.0, 16.0))
         .show(ui, |ui| {
@@ -176,7 +176,7 @@ pub fn primary_button(text: &str) -> egui::Button<'static> {
 pub fn ghost_button(text: &str, color: Color32) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text).size(13.5).color(color))
         .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::new(1.0, with_alpha(color, 90)))
+        .stroke(Stroke::new(1.0_f32, with_alpha(color, 90)))
         .min_size(vec2(0.0, 30.0))
         .rounding(9.0)
 }
@@ -210,7 +210,7 @@ pub fn choice_card(ui: &mut egui::Ui, title: &str, description: &str, tag: &str)
             rect,
             14.0,
             Stroke::new(
-                1.0,
+                1.0_f32,
                 if hovered {
                     with_alpha(ACCENT, 160)
                 } else {
@@ -272,7 +272,7 @@ pub fn show_toast(ctx: &egui::Context, slot: &mut Option<Toast>) {
         .show(ctx, |ui| {
             egui::Frame::none()
                 .fill(Color32::from_rgb(20, 25, 40))
-                .stroke(Stroke::new(1.0, with_alpha(current.color, 140)))
+                .stroke(Stroke::new(1.0_f32, with_alpha(current.color, 140)))
                 .rounding(12.0)
                 .inner_margin(Margin::symmetric(16.0, 11.0))
                 .show(ui, |ui| {
