@@ -543,9 +543,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "base64"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bit-set"
@@ -1104,7 +1104,7 @@ dependencies = [
 name = "deterium-core"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "serde",
  "thiserror 1.0.69",
  "toml 0.8.2",
@@ -1178,7 +1178,7 @@ dependencies = [
 name = "deterium-proto-wireguard"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "boringtun",
  "deterium-core",
  "deterium-net",
@@ -1189,7 +1189,7 @@ dependencies = [
 name = "deterium-secrets"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "deterium-core",
  "thiserror 1.0.69",
  "windows-sys 0.59.0",

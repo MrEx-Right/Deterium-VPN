@@ -9,6 +9,6 @@ description = "WireGuard ProtocolAdapter implementation."
 [dependencies]
 deterium-core.workspace = true
 boringtun = "0.6"
-base64 = "0.22"
+base64 = "0.23"
 getrandom = "0.2"
 deterium-net.workspace = true
