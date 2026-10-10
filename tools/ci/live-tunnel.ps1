@@ -83,10 +83,13 @@ function Run-Recovery {
     if ($LASTEXITCODE -ne 0) { throw "recover_after_crash failed (exit $LASTEXITCODE)" }
 }
 
-# The adapter the Deterium tunnel created (Wintun), by driver description.
+# The adapter the Deterium tunnel created. The app names its WireGuard adapter
+# "Deterium" (OpenVPN's is "Deterium OpenVPN"), so look for it by name: its
+# driver description and link state vary between machines (on GitHub's runners
+# a lookup by "Wintun" and status "Up" found nothing even though the route to
+# the tunnel pointed at it).
 function Get-TunnelAdapterAlias {
-    $adapter = Get-NetAdapter -ErrorAction SilentlyContinue |
-        Where-Object { $_.InterfaceDescription -like "*Wintun*" -and $_.Status -eq "Up" } |
+    $adapter = Get-NetAdapter -Name "Deterium" -IncludeHidden -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if (-not $adapter) { return $null }
     return $adapter.InterfaceAlias

@@ -108,10 +108,14 @@ jobs:
             $body = Join-Path $work "body.txt"
             $text = ($marker + "-") * [math]::Ceiling(131072 / ($marker.Length + 1))
             [IO.File]::WriteAllText($body, $text.Substring(0, 131072), [Text.Encoding]::ASCII)
-            # The server's answer doesn't matter (it will redirect or refuse); what
-            # matters is that the request left through the tunnel.
-            & curl.exe -sS --max-time 25 -o NUL -H "X-Deterium-Probe: $marker" --data-binary "@$body" "http://1.1.1.1/"
-            Write-Host "plaintext request sent (curl exit $LASTEXITCODE)"
+            # The server's answer doesn't matter (1.1.1.1 redirects or refuses, and may
+            # close the connection before the whole body is sent); what matters is that
+            # the request left through the tunnel. Send it several times so plenty of
+            # plaintext goes in even if each attempt is cut short.
+            1..6 | ForEach-Object {
+              & curl.exe -sS --max-time 25 -o NUL -H "X-Deterium-Probe: $marker" --data-binary "@$body" "http://1.1.1.1/"
+              Write-Host "plaintext request $_ sent (curl exit $LASTEXITCODE)"
+            }
             # And some more, so there is a fair amount of ciphertext to examine.
             1..5 | ForEach-Object { & curl.exe -sS --max-time 15 -o NUL "https://1.1.1.1/cdn-cgi/trace" }
             Start-Sleep -Seconds 2
@@ -127,12 +131,12 @@ jobs:
             Get-Content (Join-Path $work "relay.out"), (Join-Path $work "relay.err") -ErrorAction SilentlyContinue
           }
 
-          # tx_bytes counts what the tunnel carried; it must be at least the body we sent,
-          # otherwise the plaintext never really went through it.
+          # tx_bytes counts what the tunnel carried. A lot of plaintext must have gone into
+          # it, otherwise the check on the wire below would prove nothing.
           if ($report -match 'tx=(\d+)') {
             $tx = [int64]$Matches[1]
             Write-Host "tunnel carried $tx bytes outbound"
-            if ($tx -lt 131072) { throw "the tunnel carried only $tx bytes, less than the 131072-byte plaintext we sent" }
+            if ($tx -lt 32768) { throw "the tunnel carried only $tx bytes; too little plaintext went through it to judge the wire" }
           } else { throw "no byte counter in the disconnect report: '$report'" }
 
       - name: Judge the wire
