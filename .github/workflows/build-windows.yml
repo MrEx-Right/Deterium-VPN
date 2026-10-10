@@ -46,7 +46,8 @@ jobs:
         run: cargo clippy --workspace --all-targets
 
       - name: Tests
-        run: cargo test --workspace
+        # Keep going after a failure so one run shows every broken crate.
+        run: cargo test --workspace --no-fail-fast
 
       - name: No secrets in the tree
         shell: pwsh

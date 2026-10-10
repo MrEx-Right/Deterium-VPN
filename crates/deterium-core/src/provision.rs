@@ -140,19 +140,49 @@ mod tests {
         }
     }
 
+    /// A `bash` that really runs. Spawning succeeding is not enough: on Windows
+    /// `bash` can be WSL's stub, which starts fine and then reports that no
+    /// distribution is installed, so each candidate must answer a probe.
+    fn working_bash() -> Option<&'static str> {
+        use std::process::Command;
+
+        let candidates: &[&str] = if cfg!(windows) {
+            &[
+                "bash",
+                r"C:\Program Files\Git\bin\bash.exe",
+                r"C:\Program Files\Git\usr\bin\bash.exe",
+            ]
+        } else {
+            &["bash"]
+        };
+        candidates.iter().copied().find(|bash| {
+            Command::new(bash)
+                .args(["-c", "echo deterium-bash-ok"])
+                .output()
+                .map(|out| {
+                    out.status.success()
+                        && String::from_utf8_lossy(&out.stdout).trim() == "deterium-bash-ok"
+                })
+                .unwrap_or(false)
+        })
+    }
+
     #[test]
     fn generated_script_passes_bash_syntax_check() {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
-        let Ok(mut child) = Command::new("bash")
+        let Some(bash) = working_bash() else {
+            eprintln!("no working bash on this machine; skipping the syntax check");
+            return;
+        };
+        eprintln!("syntax-checking the script with {bash}");
+        let mut child = Command::new(bash)
             .arg("-n")
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-        else {
-            return; // no bash on this machine; syntax check not possible
-        };
+            .expect("a bash that just answered should start");
         let script = wireguard_server_script(&WireGuardServerSetup::new(KEY)).unwrap();
         child
             .stdin
