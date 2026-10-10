@@ -1,0 +1,131 @@
+name: VPN check
+
+# Does a real Deterium connection work end to end?
+#
+# On a Windows runner, Deterium brings up a real WireGuard tunnel (Wintun
+# adapter, routes) to Cloudflare WARP, and the job checks from outside the app
+# that traffic really goes through it:
+#
+#   * before connecting, 1.1.1.1's trace page says warp=off;
+#   * while connected, Windows routes 1.1.1.1 through the tunnel adapter and the
+#     same page says warp=on, from a different public IP;
+#   * a destination that is NOT routed into the tunnel stays direct (warp=off),
+#     so the runner's own connection is untouched;
+#   * after disconnecting, everything is back to warp=off.
+#
+# Why WARP and not "a random proxy": it is a WireGuard server run by a company
+# with a track record, free, and it announces itself (warp=on), so the test can
+# prove it is really using the tunnel. An unknown public proxy could log or
+# alter the traffic, and a proxy is not a VPN, so it couldn't exercise the
+# adapter, routes and handshake that this test exists for.
+#
+# This depends on an outside service, so don't make it a required check: a red
+# result here should be read before it is trusted.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 08:00 Turkey time (GitHub cron is UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vpn-check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  vpn:
+    name: connects and routes through the tunnel
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test profile (anonymous Cloudflare WARP device)
+        id: warp
+        uses: ./.github/actions/warp-profile
+
+      - name: Build the live tunnel test
+        run: cargo test -p deterium-engine --test live_tunnel --no-run
+
+      - name: Connect, measure, disconnect
+        shell: pwsh
+        env:
+          PROFILE_PATH: ${{ steps.warp.outputs.conf }}
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          $dir = Join-Path $env:RUNNER_TEMP "live"
+
+          function Check([bool]$ok, [string]$what) {
+            if ($ok) { Write-Host "ok    $what" } else { Write-Host "FAIL  $what" -ForegroundColor Red; $script:failed += $what }
+          }
+          $failed = @()
+
+          # 1. Before: not on WARP.
+          $before = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
+          Write-Host "before: ip=$($before['ip']) warp=$($before['warp'])"
+          Check ($before['warp'] -eq 'off') "before connecting, 1.1.1.1 reports warp=off"
+
+          # 2. Connect.
+          $proc = Start-Hold $env:PROFILE_PATH $dir
+          try {
+            Wait-Ready $proc $dir 120
+            Write-Host "tunnel is up"
+
+            $alias = Get-TunnelAdapterAlias
+            Check ($null -ne $alias) "a Wintun adapter is up"
+            $egress = Get-EgressAlias "1.1.1.1"
+            Write-Host "route to 1.1.1.1 uses interface '$egress' (tunnel adapter: '$alias')"
+            Check ($alias -and $egress -eq $alias) "Windows sends 1.1.1.1 through the tunnel adapter"
+
+            # 3. Through the tunnel.
+            $during = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
+            Write-Host "during: ip=$($during['ip']) warp=$($during['warp']) colo=$($during['colo'])"
+            Check ($during['warp'] -eq 'on') "through the tunnel, 1.1.1.1 reports warp=on"
+            Check ($during['ip'] -and $during['ip'] -ne $before['ip']) "the public IP seen by the server changed"
+
+            # 4. A destination outside the tunnel stays direct.
+            $direct = Get-Trace "https://www.cloudflare.com/cdn-cgi/trace"
+            Write-Host "not routed: ip=$($direct['ip']) warp=$($direct['warp'])"
+            Check ($direct['warp'] -eq 'off') "traffic not routed into the tunnel stays direct"
+            Check ($direct['ip'] -eq $before['ip']) "the runner keeps its own public IP for it"
+          } finally {
+            # 5. Disconnect (always, so the runner is left clean even on failure).
+            try {
+              $report = Stop-Hold $proc $dir 60
+              Write-Host "disconnected cleanly ($($report.Trim()))"
+            } catch {
+              Write-Host "disconnect problem: $_" -ForegroundColor Red
+              $failed += "clean disconnect"
+              Kill-Hold $proc
+            }
+            Write-Host "--- test log"
+            Get-Content (Join-Path $dir "test.log") -ErrorAction SilentlyContinue
+          }
+
+          # 6. After: back to normal.
+          $after = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
+          Check ($after['warp'] -eq 'off') "after disconnecting, 1.1.1.1 reports warp=off again"
+          Check ($null -eq (Get-TunnelAdapterAlias)) "no tunnel adapter is left behind"
+
+          if ($failed.Count -gt 0) { throw "$($failed.Count) check(s) failed: $($failed -join '; ')" }
+          Write-Host "All checks passed."
+
+      - name: Put the network back if the test died halfway
+        if: always()
+        shell: pwsh
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          Get-Process -Name "live_tunnel-*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Run-Recovery

@@ -1,0 +1,38 @@
+# --- Build output --------------------------------------------------------
+/target
+/dist/
+*.pdb
+
+# --- Never commit: keys, local test material, user data -------------------
+# Keys, test servers and private notes live in .dev-keys/. tools/scan-secrets.ps1
+# checks the rest of the tree before a release.
+.dev-keys/
+/profiles/
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+
+# --- Fetched at build time (tools/fetch-openvpn.ps1), not stored in git ----
+# The official OpenVPN binaries: see THIRD-PARTY.md for version, hash and source.
+/crates/deterium-proto-openvpn/assets/openvpn/
+
+# --- Binaries are never committed (the app is built from source) -----------
+*.exe
+*.msi
+*.msix
+
+# --- Editors, tools and the OS ---------------------------------------------
+/.claude/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+!/crates/**/tests/fixtures/*.log
+*.tmp

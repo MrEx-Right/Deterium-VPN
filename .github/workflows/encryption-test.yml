@@ -1,0 +1,155 @@
+name: Encryption test
+
+# When data leaves this PC through the tunnel, is all of it encrypted?
+#
+# Deterium's WireGuard endpoint is pointed at a small local relay
+# (tools/ci/wire-relay.py) that forwards everything to the real server
+# (Cloudflare WARP) and writes down every datagram, both directions, byte for
+# byte. While the tunnel is up the job pushes a loud, recognisable plaintext
+# through it: a 128 KB HTTP POST whose body is a unique marker repeated over and
+# over, the easiest possible thing to spot if it were not encrypted.
+#
+# tools/ci/check-wire-log.py then requires that, on the wire:
+#
+#   1. every datagram is a well-formed WireGuard message (nothing else leaves);
+#   2. neither the marker nor any plaintext protocol text (HTTP lines, Host
+#      headers) appears anywhere, in either direction;
+#   3. the transport payloads look like ciphertext (entropy of at least 7.9 bits
+#      per byte, which a repeated plaintext cannot reach);
+#   4. enough traffic was seen for that judgement to mean something.
+#
+# Windows must also route the destination into the tunnel adapter, so the
+# request cannot bypass the tunnel on the physical network card.
+#
+# The checker proves itself first (--selftest): good traffic passes; a leaked
+# marker, plaintext HTTP, a wrong frame and low-entropy "ciphertext" are caught.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "10 5 * * 1" # Mondays 08:10 Turkey time (GitHub cron is UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: encryption-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RELAY: "127.0.0.1:51888"
+
+jobs:
+  encryption:
+    name: everything on the wire is ciphertext
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: The checker catches leaks (self-test)
+        run: python tools/ci/check-wire-log.py --selftest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test profile, endpoint pointed at the local relay
+        id: warp
+        uses: ./.github/actions/warp-profile
+        with:
+          relay-endpoint: ${{ env.RELAY }}
+
+      - name: Build the live tunnel test
+        run: cargo test -p deterium-engine --test live_tunnel --no-run
+
+      - name: Send plaintext through the tunnel while recording the wire
+        shell: pwsh
+        env:
+          PROFILE_PATH: ${{ steps.warp.outputs.conf }}
+          UPSTREAM: ${{ steps.warp.outputs.endpoint }}
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          $work = Join-Path $env:RUNNER_TEMP "wire"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          $log = Join-Path $work "relay.jsonl"
+          $stop = Join-Path $work "relay.stop"
+          $dir = Join-Path $work "live"
+
+          # A fresh marker every run, so a stale or cached log can't pass by accident.
+          $marker = "DETERIUM-PROBE-" + [guid]::NewGuid().ToString("N")
+          Set-Content -Path (Join-Path $work "marker.txt") -Value $marker -NoNewline -Encoding ASCII
+
+          Write-Host "starting the relay: $env:RELAY -> $env:UPSTREAM"
+          $relay = Start-Process python -ArgumentList "tools/ci/wire-relay.py", "--listen", $env:RELAY, "--upstream", $env:UPSTREAM, "--log", $log, "--stop-file", $stop `
+            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $work "relay.out") -RedirectStandardError (Join-Path $work "relay.err")
+          Start-Sleep -Seconds 2
+          if ($relay.HasExited) { throw "the relay did not start: $(Get-Content (Join-Path $work 'relay.err') -Raw)" }
+
+          $proc = Start-Hold $env:PROFILE_PATH $dir
+          try {
+            Wait-Ready $proc $dir 120
+            Write-Host "tunnel is up through the relay"
+
+            $alias = Get-TunnelAdapterAlias
+            $egress = Get-EgressAlias "1.1.1.1"
+            Write-Host "route to 1.1.1.1 uses interface '$egress' (tunnel adapter: '$alias')"
+            if (-not $alias -or $egress -ne $alias) { throw "Windows would NOT send 1.1.1.1 through the tunnel adapter, so the request could bypass the tunnel" }
+
+            # 128 KB of one repeated, recognisable plaintext as an HTTP request body.
+            $body = Join-Path $work "body.txt"
+            $text = ($marker + "-") * [math]::Ceiling(131072 / ($marker.Length + 1))
+            [IO.File]::WriteAllText($body, $text.Substring(0, 131072), [Text.Encoding]::ASCII)
+            # The server's answer doesn't matter (it will redirect or refuse); what
+            # matters is that the request left through the tunnel.
+            & curl.exe -sS --max-time 25 -o NUL -H "X-Deterium-Probe: $marker" --data-binary "@$body" "http://1.1.1.1/"
+            Write-Host "plaintext request sent (curl exit $LASTEXITCODE)"
+            # And some more, so there is a fair amount of ciphertext to examine.
+            1..5 | ForEach-Object { & curl.exe -sS --max-time 15 -o NUL "https://1.1.1.1/cdn-cgi/trace" }
+            Start-Sleep -Seconds 2
+          } finally {
+            try { $report = Stop-Hold $proc $dir 60; Write-Host "disconnected cleanly ($($report.Trim()))" }
+            catch { Write-Host "disconnect problem: $_" -ForegroundColor Red; Kill-Hold $proc }
+            Set-Content -Path $stop -Value "stop"
+            $relay.WaitForExit(15000) | Out-Null
+            if (-not $relay.HasExited) { $relay.Kill() }
+            Write-Host "--- test log"
+            Get-Content (Join-Path $dir "test.log") -ErrorAction SilentlyContinue
+            Write-Host "--- relay"
+            Get-Content (Join-Path $work "relay.out"), (Join-Path $work "relay.err") -ErrorAction SilentlyContinue
+          }
+
+          # tx_bytes counts what the tunnel carried; it must be at least the body we sent,
+          # otherwise the plaintext never really went through it.
+          if ($report -match 'tx=(\d+)') {
+            $tx = [int64]$Matches[1]
+            Write-Host "tunnel carried $tx bytes outbound"
+            if ($tx -lt 131072) { throw "the tunnel carried only $tx bytes, less than the 131072-byte plaintext we sent" }
+          } else { throw "no byte counter in the disconnect report: '$report'" }
+
+      - name: Judge the wire
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "wire"
+          $marker = Get-Content (Join-Path $work "marker.txt") -Raw
+          python tools/ci/check-wire-log.py (Join-Path $work "relay.jsonl") --marker $marker --marker "X-Deterium-Probe"
+          if ($LASTEXITCODE -ne 0) { throw "plaintext or malformed data left the PC" }
+
+      - name: Put the network back if the test died halfway
+        if: always()
+        shell: pwsh
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          Get-Process -Name "live_tunnel-*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
+            Where-Object { $_.CommandLine -like "*wire-relay*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          Run-Recovery

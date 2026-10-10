@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/deterium-core",
+    "crates/deterium-proto-wireguard",
+    "crates/deterium-proto-openvpn",
+    "crates/deterium-net",
+    "crates/deterium-secrets",
+    "crates/deterium-ipc",
+    "crates/deterium-service",
+    "crates/deterium-engine",
+    "crates/deterium-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "TBD"
+publish = false
+
+[workspace.dependencies]
+deterium-core = { path = "crates/deterium-core" }
+deterium-proto-wireguard = { path = "crates/deterium-proto-wireguard" }
+deterium-proto-openvpn = { path = "crates/deterium-proto-openvpn" }
+deterium-engine = { path = "crates/deterium-engine" }
+deterium-net = { path = "crates/deterium-net" }
+deterium-secrets = { path = "crates/deterium-secrets" }
+deterium-ipc = { path = "crates/deterium-ipc" }
+deterium-service = { path = "crates/deterium-service" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

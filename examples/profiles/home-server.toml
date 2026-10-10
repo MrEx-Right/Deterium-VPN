@@ -1,0 +1,19 @@
+# Example ServerProfile — see docs/ARCHITECTURE.md §3a for the schema.
+# Keys below are placeholders, not real WireGuard keys.
+
+deterium_profile_version = 1
+id = "b3f1b1a0-7e34-4c9a-9b7a-2e9a9c6b7e10"
+name = "Home Server"
+protocol = "wireguard"
+tags = ["home"]
+
+[wireguard.interface]
+private_key = "PLACEHOLDER_PRIVATE_KEY_REPLACE_ME"
+address = ["10.6.0.2/32"]
+dns = ["10.6.0.1"]
+
+[wireguard.peer]
+public_key = "PLACEHOLDER_PUBLIC_KEY_REPLACE_ME"
+endpoint = "vpn.example.com:51820"
+allowed_ips = ["0.0.0.0/0", "::/0"]
+persistent_keepalive = 25

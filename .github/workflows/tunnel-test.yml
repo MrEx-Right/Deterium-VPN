@@ -1,0 +1,136 @@
+name: Tunnel test
+
+# Can the tunnel be entered and left safely? A VPN client that changes routes,
+# adapters and DNS must give them all back, every time, even after a crash.
+#
+# Using the same real WireGuard tunnel as "VPN check" (Cloudflare WARP, only
+# 1.1.1.1 and 1.0.0.1 routed so the runner itself is never cut off), this job:
+#
+#   1. takes a snapshot of the network (adapters, addresses, routes, DNS);
+#   2. connects and disconnects three times in a row, and after EACH round
+#      requires the network to be identical to the snapshot;
+#   3. connects once more and kills the process mid-tunnel, as a crash would,
+#      then runs the recovery the app runs at start-up and requires the network
+#      to be identical to the snapshot again.
+#
+# The kill switch is deliberately not enabled here: on a shared runner a
+# firewall that blocks everything outside the tunnel would also block the
+# connection to GitHub. Its blocking behaviour is covered by unit tests and by
+# the manual hardware checks listed in the README.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "5 5 * * 1" # Mondays 08:05 Turkey time (GitHub cron is UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tunnel-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tunnel:
+    name: enter and leave the tunnel cleanly
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test profile (anonymous Cloudflare WARP device)
+        id: warp
+        uses: ./.github/actions/warp-profile
+
+      - name: Build the live tunnel test
+        run: cargo test -p deterium-engine --test live_tunnel --no-run
+
+      - name: Snapshot the network before anything happens
+        shell: pwsh
+        run: ./tools/ci/net-snapshot.ps1 -Out "$env:RUNNER_TEMP/net-before.txt"
+
+      - name: Connect and disconnect, three times
+        shell: pwsh
+        env:
+          PROFILE_PATH: ${{ steps.warp.outputs.conf }}
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          $before = Join-Path $env:RUNNER_TEMP "net-before.txt"
+          $problems = @()
+
+          foreach ($round in 1..3) {
+            Write-Host "::group::round $round"
+            $dir = Join-Path $env:RUNNER_TEMP "live-$round"
+            $proc = Start-Hold $env:PROFILE_PATH $dir
+            try {
+              Wait-Ready $proc $dir 120
+              $trace = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
+              Write-Host "round ${round}: warp=$($trace['warp']) ip=$($trace['ip'])"
+              if ($trace['warp'] -ne 'on') { $problems += "round ${round}: the tunnel carried no traffic (warp=$($trace['warp']))" }
+            } catch {
+              $problems += "round ${round}: $_"
+              Kill-Hold $proc
+            }
+            if (-not $proc.HasExited) {
+              try { Stop-Hold $proc $dir 60 | Out-Null } catch { $problems += "round ${round}: $_"; Kill-Hold $proc }
+            }
+            $after = Join-Path $env:RUNNER_TEMP "net-after-$round.txt"
+            ./tools/ci/net-snapshot.ps1 -Out $after | Out-Null
+            ./tools/ci/net-snapshot.ps1 -Before $before -After $after
+            if ($LASTEXITCODE -ne 0) { $problems += "round ${round}: the network is not as it was before" }
+            Write-Host "::endgroup::"
+          }
+
+          if ($problems.Count -gt 0) { throw ($problems -join "`n") }
+          Write-Host "Three clean rounds."
+
+      - name: Crash in the middle of a tunnel, then recover
+        shell: pwsh
+        env:
+          PROFILE_PATH: ${{ steps.warp.outputs.conf }}
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          $before = Join-Path $env:RUNNER_TEMP "net-before.txt"
+          $dir = Join-Path $env:RUNNER_TEMP "live-crash"
+          $proc = Start-Hold $env:PROFILE_PATH $dir
+          Wait-Ready $proc $dir 120
+          $mid = Join-Path $env:RUNNER_TEMP "net-mid-crash.txt"
+          ./tools/ci/net-snapshot.ps1 -Out $mid | Out-Null
+          ./tools/ci/net-snapshot.ps1 -Before $before -After $mid *> $null
+          if ($LASTEXITCODE -eq 0) { throw "the network did not change while the tunnel was up, so this test proves nothing" }
+          Write-Host "tunnel is up and the network differs from before, as expected"
+
+          Write-Host "killing the process without letting it disconnect..."
+          Kill-Hold $proc
+          Start-Sleep -Seconds 2
+
+          Write-Host "running the start-up recovery..."
+          Run-Recovery
+          Start-Sleep -Seconds 2
+
+          $after = Join-Path $env:RUNNER_TEMP "net-after-crash.txt"
+          ./tools/ci/net-snapshot.ps1 -Out $after | Out-Null
+          ./tools/ci/net-snapshot.ps1 -Before $before -After $after
+          if ($LASTEXITCODE -ne 0) { throw "recovery did not put the network back" }
+
+          $trace = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
+          if ($trace['warp'] -ne 'off') { throw "traffic still goes through a tunnel after recovery (warp=$($trace['warp']))" }
+          Write-Host "Recovered: the network is exactly as before the crash."
+
+      - name: Put the network back if a step died halfway
+        if: always()
+        shell: pwsh
+        run: |
+          . ./tools/ci/live-tunnel.ps1
+          Get-Process -Name "live_tunnel-*" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Run-Recovery

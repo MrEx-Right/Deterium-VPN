@@ -1,0 +1,14 @@
+[package]
+name = "deterium-proto-wireguard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "WireGuard ProtocolAdapter implementation."
+
+[dependencies]
+deterium-core.workspace = true
+boringtun = "0.6"
+base64 = "0.22"
+getrandom = "0.2"
+deterium-net.workspace = true

@@ -1,0 +1,63 @@
+name: CodeQL
+
+# GitHub's code scanner. It reads the source for security bugs (unsafe use of
+# the Windows APIs, injection, hard-coded secrets) and for mistakes in the
+# workflow files themselves, and reports them under Security > Code scanning.
+#
+# Rust runs on Windows on purpose: most of this code is `cfg(windows)`, and
+# CodeQL only sees the code that is compiled for the platform it runs on.
+# Code scanning is free for public repositories.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1" # Mondays: new queries get applied to old code
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      security-events: write # upload the results
+      packages: read # fetch CodeQL packs
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            runner: windows-latest
+            build-mode: none
+          - language: actions
+            runner: ubuntu-latest
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.language == 'rust'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

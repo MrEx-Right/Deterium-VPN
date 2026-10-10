@@ -1,0 +1,63 @@
+name: WARP test profile
+description: >
+  Makes a throw-away WireGuard profile for the CI tunnel tests. It registers an
+  anonymous Cloudflare WARP device with wgcf (built from source at a pinned
+  version; the Go module proxy checks its hash) and writes a profile that routes
+  only 1.1.1.1 and 1.0.0.1, so the runner's own traffic never enters the tunnel.
+
+inputs:
+  relay-endpoint:
+    description: >
+      host:port to use as the profile's endpoint instead of the real one (the
+      encryption test points it at a local relay). Empty keeps the real endpoint.
+    required: false
+    default: ""
+
+outputs:
+  conf:
+    description: Path of the test profile.
+    value: ${{ steps.make.outputs.conf }}
+  endpoint:
+    description: The real WARP endpoint (host:port), whatever relay-endpoint says.
+    value: ${{ steps.make.outputs.endpoint }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+
+    - name: Build wgcf from source
+      shell: pwsh
+      run: |
+        # Pinned release; the Go checksum database verifies the module contents.
+        go install github.com/ViRb3/wgcf/v2@v2.3.0
+        Add-Content -Path $env:GITHUB_PATH -Value (Join-Path (go env GOPATH) "bin")
+
+    - name: Register an anonymous WARP device and write the profile
+      id: make
+      shell: pwsh
+      env:
+        RELAY_ENDPOINT: ${{ inputs.relay-endpoint }}
+      run: |
+        $dir = Join-Path $env:RUNNER_TEMP "warp"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        Push-Location $dir
+        try {
+          wgcf register --accept-tos
+          if ($LASTEXITCODE -ne 0) { throw "wgcf register failed (exit $LASTEXITCODE); Cloudflare may be rate-limiting this runner" }
+          wgcf generate
+          if ($LASTEXITCODE -ne 0) { throw "wgcf generate failed (exit $LASTEXITCODE)" }
+        } finally { Pop-Location }
+
+        $out = Join-Path $dir "ci-warp.conf"
+        $script = Join-Path $env:GITHUB_WORKSPACE "tools/ci/make-warp-conf.ps1"
+        if ($env:RELAY_ENDPOINT) {
+          & $script -In (Join-Path $dir "wgcf-profile.conf") -Out $out -Endpoint $env:RELAY_ENDPOINT -MaskSecrets
+        } else {
+          & $script -In (Join-Path $dir "wgcf-profile.conf") -Out $out -MaskSecrets
+        }
+        "conf=$out" | Add-Content -Path $env:GITHUB_OUTPUT
+        "endpoint=$(Get-Content "$out.endpoint" -Raw)" | Add-Content -Path $env:GITHUB_OUTPUT

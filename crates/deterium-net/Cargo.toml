@@ -1,0 +1,33 @@
+[package]
+name = "deterium-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "OS networking layer: virtual adapters, routes, DNS, elevation. Protocol-agnostic, with a fake platform for tests."
+
+[dependencies]
+deterium-core.workspace = true
+serde.workspace = true
+serde_json = "1"
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Rpc",
+    "Win32_System_Threading",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
+    "Win32_Networking_WinSock",
+    "Win32_UI_Shell",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+]

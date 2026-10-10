@@ -1,0 +1,78 @@
+name: Build (Windows)
+
+# The product is Windows-first, so this is the check that has to stay green:
+# formatting, lints, every test, a scan for leaked keys, and a real release
+# build with OpenVPN built in.
+#
+# It builds the app only to prove it builds. Nothing is uploaded or published:
+# Deterium is distributed as source and built on the user's own PC
+# (Install-Deterium.bat).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: fmt, clippy, tests, release build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Lints
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: No secrets in the tree
+        shell: pwsh
+        run: ./tools/scan-secrets.ps1
+
+      - name: Fetch the official OpenVPN (checksum and signature verified)
+        shell: pwsh
+        run: ./tools/fetch-openvpn.ps1
+
+      - name: Release build with OpenVPN built in
+        run: cargo build --release -p deterium-gui
+
+      - name: Smoke test the built app
+        shell: pwsh
+        run: |
+          $exe = "target\release\deterium-gui.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+          $size = (Get-Item $exe).Length
+          Write-Host ("Built {0:N1} MB" -f ($size / 1MB))
+          # OpenVPN and Wintun are inside the exe, so it must be a lot bigger than
+          # the app alone.
+          if ($size -lt 10MB) { throw "the executable is only $size bytes; OpenVPN doesn't seem to be built in" }
+          $info = (Get-Item $exe).VersionInfo
+          Write-Host "$($info.ProductName) $($info.FileVersion)"
+          if ($info.ProductName -ne "Deterium VPN") { throw "unexpected product name '$($info.ProductName)'" }
+          # The service command line works without a window and without installing anything.
+          $status = (& $exe service status | Out-String).Trim()
+          Write-Host "service status: $status"
+          if ($status -notmatch "^(not installed|installed)") { throw "unexpected service status output: $status" }

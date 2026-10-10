@@ -1,0 +1,50 @@
+name: Build (Linux)
+
+# The networking layer has no Linux backend yet (see crates/deterium-net/README.md),
+# but everything else - profiles, import/export, validation, the WireGuard data
+# plane against a loopback peer, the OpenVPN process wrapper - is portable and
+# should stay that way, so a Linux port never starts from a broken base.
+#
+# The desktop app is left out: it needs system libraries (windowing, GTK) that
+# would only slow this check down. This job doesn't gate merges until a real
+# Linux run has been done by hand (continue-on-error).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build and test (portable crates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --exclude deterium-gui
+
+      - name: Lints
+        run: cargo clippy --workspace --exclude deterium-gui --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --exclude deterium-gui

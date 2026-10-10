@@ -1,0 +1,26 @@
+[package]
+name = "deterium-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The Deterium background service: owns the tunnel so the app can run without administrator rights and the kill switch survives the window closing."
+
+[lib]
+name = "deterium_service"
+path = "src/lib.rs"
+
+[dependencies]
+deterium-core.workspace = true
+deterium-engine.workspace = true
+deterium-ipc.workspace = true
+deterium-net.workspace = true
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Services",
+    "Win32_UI_WindowsAndMessaging",
+]
