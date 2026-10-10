@@ -617,19 +617,27 @@ pub fn guard_openvpn_leaks(policy: &LeakPolicy) -> Result<Box<dyn Send>, NetErro
 /// many were removed (0 when there is no such adapter).
 pub fn clear_adapter_routes(name: &str) -> usize {
     let alias = wide(name);
-    // SAFETY: Windows fills the table, which is read only while it is alive and
-    // freed afterwards; rows are only used to identify routes to delete.
+    // SAFETY: Windows allocates the table and stores its address in `table`; it
+    // is only read while it is alive and freed afterwards, and rows are only used
+    // to identify routes to delete.
     unsafe {
         let mut luid = NET_LUID_LH { Value: 0 };
         if ConvertInterfaceAliasToLuid(alias.as_ptr(), &mut luid) != NO_ERROR {
             return 0;
         }
         let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
-        if GetIpForwardTable2(AF_UNSPEC, &mut table) != NO_ERROR || table.is_null() {
+        if GetIpForwardTable2(AF_UNSPEC, &mut table) != NO_ERROR {
             return 0;
         }
-        let rows =
-            std::slice::from_raw_parts((*table).Table.as_ptr(), (*table).NumEntries as usize);
+        if table.is_null() {
+            return 0;
+        }
+        // `Table` is declared as a one-element array but really holds
+        // `NumEntries` rows. Take its address without creating a reference to
+        // that one-element array, so the pointer keeps the whole allocation as
+        // its range and reading the other rows stays inside it.
+        let first = std::ptr::addr_of!((*table).Table).cast::<MIB_IPFORWARD_ROW2>();
+        let rows = std::slice::from_raw_parts(first, (*table).NumEntries as usize);
         let mut removed = 0;
         for row in rows {
             if row.InterfaceLuid.Value == luid.Value && DeleteIpForwardEntry2(row) == NO_ERROR {
