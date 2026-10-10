@@ -10,7 +10,8 @@ the tunnel. The checks, all of which must pass:
 
   1. Framing. Every datagram is a WireGuard message: type 1, 2, 3 or 4, three
      zero bytes after it, and the fixed size of its type (148 / 92 / 64) or, for
-     transport data (type 4), at least 32 bytes in 16-byte steps. Anything else
+     transport data (type 4), at least 32 bytes (16-byte header + 16-byte tag;
+     a bare keepalive is exactly that). Anything else
      leaving the PC would be a leak or a bug.
   2. No plaintext. Neither the marker nor common plaintext protocol tokens
      (HTTP request lines, Host headers) appear anywhere in any datagram, in
@@ -68,8 +69,12 @@ def frame_problem(data):
         return "the reserved bytes are not zero"
     if kind in SIZES and len(data) != SIZES[kind]:
         return f"type {kind} must be {SIZES[kind]} bytes, got {len(data)}"
-    if kind == 4 and (len(data) < 32 or len(data) % 16 != 0):
-        return f"transport data must be 32+ bytes in 16-byte steps, got {len(data)}"
+    # The WireGuard paper asks for padding to a multiple of 16 bytes, but boringtun
+    # (which Deterium uses) leaves it out on purpose ("works fine without it"), so
+    # only the minimum size is enforced. Padding hides packet sizes slightly; it is
+    # not what makes the contents unreadable.
+    if kind == 4 and len(data) < 32:
+        return f"transport data must be at least 32 bytes, got {len(data)}"
     return None
 
 
@@ -152,6 +157,14 @@ def selftest():
     weak = [handshake()] + [b"\x04\x00\x00\x00" + (b"ABCDEFGH" * 175)[:1388] for _ in range(40)]
     problems, _ = judge(weak, good_in, [marker])
     cases.append(("repetitive, 'encrypted' data is caught by entropy", any("entropy" in p for p in problems), problems))
+
+    unpadded = good_out[:-3] + [b"\x04\x00\x00\x00" + rng(n) for n in (75, 107, 144)]
+    problems, _ = judge(unpadded, good_in, [marker])
+    cases.append(("unpadded transport packets (boringtun) are fine", not problems, problems))
+
+    runt = good_out + [b"\x04\x00\x00\x00" + rng(12)]
+    problems, _ = judge(runt, good_in, [marker])
+    cases.append(("a transport packet shorter than header+tag is caught", any("at least 32" in p for p in problems), problems))
 
     problems, _ = judge([], [], [marker])
     cases.append(("an empty capture is not a pass", bool(problems), problems))

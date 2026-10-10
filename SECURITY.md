@@ -45,6 +45,11 @@ These are documented and on the roadmap:
 - Secrets are protected against other Windows accounts and against copying the
   files to another PC, **not** against malware already running as the same user.
 - Deterium is not distributed as a ready-made binary and is not code-signed: you build it from source (`Install-Deterium.bat`), so what runs is the code you can read.
+- WireGuard packets are not padded. The WireGuard paper suggests padding the
+  data to a multiple of 16 bytes; the library Deterium uses (boringtun) leaves
+  that out, so someone watching your connection can see roughly how big each
+  packet is. The contents stay encrypted (the encryption test checks that every
+  byte leaving the PC is ciphertext), but sizes are not hidden.
 - Installing the service from a folder ordinary users can write to (only
   allowed with `--dev-insecure-location`) lets any program running as that user
   become SYSTEM. Real installs must be under Program Files.
