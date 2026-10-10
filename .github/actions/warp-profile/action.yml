@@ -1,8 +1,8 @@
 name: WARP test profile
 description: >
   Makes a throw-away WireGuard profile for the CI tunnel tests. It registers an
-  anonymous Cloudflare WARP device with wgcf (built from source at a pinned
-  version; the Go module proxy checks its hash) and writes a profile that routes
+  anonymous Cloudflare WARP device with wgcf (the official release at a pinned
+  version, checked against a pinned SHA-256) and writes a profile that routes
   only 1.1.1.1 and 1.0.0.1, so the runner's own traffic never enters the tunnel.
 
 inputs:
@@ -24,17 +24,25 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@v5
-      with:
-        go-version: stable
-        cache: false
-
-    - name: Build wgcf from source
+    - name: Fetch wgcf (pinned release, SHA-256 verified)
       shell: pwsh
       run: |
-        # Pinned release; the Go checksum database verifies the module contents.
-        go install github.com/ViRb3/wgcf/v2@v2.3.0
-        Add-Content -Path $env:GITHUB_PATH -Value (Join-Path (go env GOPATH) "bin")
+        # `go install ...@version` doesn't work for wgcf (its go.mod has replace
+        # directives and it generates an API client at build time), so use the
+        # official release binary and refuse it unless the hash matches.
+        $version = "2.3.0"
+        $sha256 = "5c633e265fb969c9507b68b39c5b0762e39181ce9f578ab66cb3b4edb0696ef5"
+        $bin = Join-Path $env:RUNNER_TEMP "wgcf-bin"
+        New-Item -ItemType Directory -Force $bin | Out-Null
+        $exe = Join-Path $bin "wgcf.exe"
+        Invoke-WebRequest -UseBasicParsing -OutFile $exe `
+          -Uri "https://github.com/ViRb3/wgcf/releases/download/v$version/wgcf_${version}_windows_amd64.exe"
+        $actual = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+        if ($actual -ne $sha256) {
+          Remove-Item $exe -Force
+          throw "wgcf checksum mismatch: expected $sha256, got $actual"
+        }
+        Add-Content -Path $env:GITHUB_PATH -Value $bin
 
     - name: Register an anonymous WARP device and write the profile
       id: make

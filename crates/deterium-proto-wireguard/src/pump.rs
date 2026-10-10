@@ -471,17 +471,38 @@ mod tests {
         let seen = client.os.recv_timeout(Duration::from_secs(10));
         assert_eq!(seen.as_deref(), Some(&reply[..]), "server -> client");
 
-        assert_eq!(
-            client.shared.counters.tx_bytes.load(Ordering::Relaxed),
-            request.len() as u64
+        // The counters are bumped just after the packet is handed on, so the other
+        // end can see the packet a moment before the count catches up.
+        wait_for_count(
+            &client.shared.counters.tx_bytes,
+            request.len() as u64,
+            "bytes sent",
         );
-        assert_eq!(
-            client.shared.counters.rx_bytes.load(Ordering::Relaxed),
-            reply.len() as u64
+        wait_for_count(
+            &client.shared.counters.rx_bytes,
+            reply.len() as u64,
+            "bytes received",
         );
 
         client.stop();
         server.stop();
+    }
+
+    /// Waits until `counter` reads exactly `wanted`, failing if it never does
+    /// (or overshoots, which would mean a packet was counted twice).
+    fn wait_for_count(counter: &AtomicU64, wanted: u64, what: &str) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = counter.load(Ordering::Relaxed);
+            if now == wanted {
+                return;
+            }
+            assert!(
+                now < wanted && Instant::now() < deadline,
+                "{what}: expected {wanted}, counter reads {now}"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

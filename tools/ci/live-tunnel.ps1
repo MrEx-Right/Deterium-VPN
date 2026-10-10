@@ -72,6 +72,12 @@ function Kill-Hold($Proc) {
 }
 
 function Run-Recovery {
+    # If an earlier step failed before the test was built, no tunnel was ever
+    # brought up, so there is nothing to put back (and the real error is above).
+    if (-not (Get-ChildItem -Path "target\debug\deps" -Filter "live_tunnel-*.exe" -ErrorAction SilentlyContinue)) {
+        Write-Host "no live_tunnel test binary was built; nothing to recover"
+        return
+    }
     $exe = Get-LiveTestExe
     & $exe "recover_after_crash" "--ignored" "--nocapture" "--exact"
     if ($LASTEXITCODE -ne 0) { throw "recover_after_crash failed (exit $LASTEXITCODE)" }
