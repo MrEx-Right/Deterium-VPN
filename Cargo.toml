@@ -30,7 +30,7 @@ deterium-service = { path = "crates/deterium-service" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4", "serde"] }
-thiserror = "1"
+thiserror = "2"
 
 [profile.release]
 opt-level = 3

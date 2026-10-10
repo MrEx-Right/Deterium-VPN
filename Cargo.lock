@@ -1106,7 +1106,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "toml 0.8.2",
  "uuid",
 ]
@@ -1149,7 +1149,7 @@ dependencies = [
  "deterium-core",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "windows-sys 0.59.0",
 ]
 
@@ -1161,7 +1161,7 @@ dependencies = [
  "libloading 0.8.9",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "windows-sys 0.59.0",
 ]
 
@@ -1191,7 +1191,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "deterium-core",
- "thiserror 1.0.69",
+ "thiserror 2.0.21",
  "windows-sys 0.59.0",
 ]
 
