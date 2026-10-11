@@ -50,7 +50,10 @@ impl TestServer {
                     protocol: deterium_ipc::PROTOCOL_VERSION,
                     service_version: "test".into(),
                 },
-                Request::Status => Response::Status(deterium_ipc::ServiceStatus { active: None }),
+                Request::Status => Response::Status(deterium_ipc::ServiceStatus {
+                    active: None,
+                    armed: None,
+                }),
                 _ => Response::Error {
                     kind: ErrorKind::BadRequest,
                     message: "unsupported in this test".into(),

@@ -4,6 +4,7 @@
 //! tested with a fake connector); the Windows-only modules wrap it in a
 //! service (`scm`), install it (`install`) and serve it on the pipe.
 
+pub mod armed;
 pub mod manager;
 pub use manager::{Connector, EngineConnector, Manager, Running};
 

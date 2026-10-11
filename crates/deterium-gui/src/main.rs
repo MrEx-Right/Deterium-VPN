@@ -16,6 +16,7 @@
 mod draft;
 mod editor;
 mod hero;
+mod insights;
 mod logo;
 mod store;
 mod theme;
@@ -27,10 +28,7 @@ use deterium_engine::{ServiceState, Tunnel};
 use draft::Draft;
 use editor::{ChooserAction, EditorAction, EditorState, Picked, WizardAction, WizardState};
 use eframe::egui::{self, vec2, Align, Align2, Color32, Layout, Margin, RichText};
-use hero::{
-    add_row, detail_rows, endpoint_of, format_bytes, format_duration, host_of, power_button,
-    server_row, stat_tile, StatusView,
-};
+use hero::{add_row, endpoint_of, format_duration, power_button, server_row, StatusView};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use store::{Store, StoredProfile};
@@ -38,6 +36,8 @@ use theme::*;
 
 const SLOW_CONNECT: Duration = Duration::from_secs(8);
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
+/// How often the service is asked whether it is holding the network.
+const HELD_CHECK_EVERY: Duration = Duration::from_millis(1500);
 
 enum Connection {
     Idle,
@@ -100,6 +100,17 @@ struct DeteriumApp {
     hidden: bool,
     /// Start with the window hidden in the tray (`--minimized`).
     start_hidden: bool,
+    /// The kill switch is holding the network with no tunnel up (the service
+    /// restarted or the PC rebooted): the profile it is armed for.
+    held: Option<Uuid>,
+    held_checked: Instant,
+    /// A question to the service that is still being answered.
+    held_probe: Option<mpsc::Receiver<Option<Uuid>>>,
+    /// "Turn off protection" waiting for the service's answer.
+    held_release: Option<mpsc::Receiver<Result<(), String>>>,
+    /// Live speed, latency and totals of the current tunnel.
+    telemetry: Option<insights::Telemetry>,
+    insight_tab: insights::Tab,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -208,6 +219,14 @@ impl Default for DeteriumApp {
             quitting: false,
             hidden: false,
             start_hidden: false,
+            held: None,
+            held_checked: Instant::now()
+                .checked_sub(HELD_CHECK_EVERY)
+                .unwrap_or_else(Instant::now),
+            held_probe: None,
+            held_release: None,
+            telemetry: None,
+            insight_tab: insights::Tab::default(),
         }
     }
 }
@@ -224,6 +243,7 @@ impl eframe::App for DeteriumApp {
         }
         self.poll_connection(ctx);
         self.poll_service(ctx);
+        self.poll_held(ctx);
 
         paint_background(ctx, self.background_target());
 
@@ -236,6 +256,8 @@ impl eframe::App for DeteriumApp {
                     .inner_margin(Margin::symmetric(14.0, 18.0)),
             )
             .show(ctx, |ui| self.show_sidebar(ui));
+
+        self.show_held_banner(ctx);
 
         let mut screen = std::mem::replace(&mut self.screen, Screen::Connect);
         let mut next: Option<Screen> = None;
@@ -306,6 +328,7 @@ impl DeteriumApp {
             }
             ctx.request_repaint_after(FRAME_INTERVAL);
         }
+        self.sync_telemetry();
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
@@ -839,7 +862,19 @@ impl DeteriumApp {
                 badge(ui, "Built-in", GOOD);
             }
         });
-        ui.label(RichText::new(endpoint_of(profile)).size(13.5).color(DIM));
+        let uptime = match &self.connection {
+            Connection::Active {
+                profile: p,
+                connected_at: Some(t),
+                ..
+            } if *p == id => Some(format_duration(t.elapsed())),
+            _ => None,
+        };
+        let subtitle = match &uptime {
+            Some(up) => format!("{} \u{b7} connected {up}", endpoint_of(profile)),
+            None => endpoint_of(profile),
+        };
+        ui.label(RichText::new(subtitle).size(13.5).color(DIM));
 
         let busy = self.is_busy(id);
         ui.add_space(4.0);
@@ -913,66 +948,7 @@ impl DeteriumApp {
 
         ui.add_space(22.0);
 
-        let uptime = match &self.connection {
-            Connection::Active {
-                profile: p,
-                connected_at: Some(t),
-                ..
-            } if *p == id => format_duration(t.elapsed()),
-            _ => "--:--".into(),
-        };
-        let host = host_of(profile);
-        // Real traffic counters exist only for a real WireGuard tunnel.
-        let traffic = match &self.connection {
-            Connection::Active {
-                profile: p, tunnel, ..
-            } if *p == id && tunnel.mode() == ConnectMode::Full => tunnel.stats(),
-            _ => None,
-        };
-        ui.columns(3, |cols| {
-            stat_tile(&mut cols[0], "UPTIME", &uptime);
-            match traffic {
-                Some(stats) => {
-                    stat_tile(&mut cols[1], "DOWNLOADED", &format_bytes(stats.rx_bytes));
-                    stat_tile(&mut cols[2], "UPLOADED", &format_bytes(stats.tx_bytes));
-                }
-                None => {
-                    stat_tile(&mut cols[1], "SERVER", &host);
-                    stat_tile(
-                        &mut cols[2],
-                        "PROTOCOL",
-                        match profile.protocol {
-                            Protocol::Wireguard => "WireGuard",
-                            Protocol::Openvpn => "OpenVPN",
-                        },
-                    );
-                }
-            }
-        });
-
-        ui.add_space(18.0);
-        egui::CollapsingHeader::new(RichText::new("Connection details").size(14.0).color(DIM))
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.add_space(6.0);
-                detail_rows(ui, profile);
-            });
-
-        if let Connection::Active {
-            profile: p, tunnel, ..
-        } = &self.connection
-        {
-            let log = tunnel.log();
-            if *p == id && !log.is_empty() {
-                egui::CollapsingHeader::new(RichText::new("OpenVPN log").size(14.0).color(DIM))
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        for line in log.iter().rev().take(14).rev() {
-                            ui.label(RichText::new(line).monospace().size(11.5).color(DIM));
-                        }
-                    });
-            }
-        }
+        self.show_insights(ui, &stored);
 
         ui.add_space(30.0);
         next
@@ -1123,6 +1099,113 @@ impl DeteriumApp {
             },
         };
         tray.show(summary);
+    }
+
+    /// Keeps `held` up to date: asks the service, off the UI thread, whether
+    /// its kill switch is holding the network while no tunnel is up.
+    fn poll_held(&mut self, ctx: &egui::Context) {
+        if let Some(release) = &self.held_release {
+            ctx.request_repaint_after(Duration::from_millis(150));
+            if let Ok(result) = release.try_recv() {
+                self.held_release = None;
+                match result {
+                    Ok(()) => {
+                        self.held = None;
+                        self.toast = Some(toast(
+                            "Protection turned off - your internet access is back",
+                            GOOD,
+                        ));
+                    }
+                    Err(why) => {
+                        self.toast = Some(toast(
+                            format!("Couldn't turn the protection off: {why}"),
+                            BAD,
+                        ));
+                    }
+                }
+                self.held_checked = Instant::now()
+                    .checked_sub(HELD_CHECK_EVERY)
+                    .unwrap_or_else(Instant::now);
+            }
+            return;
+        }
+        if matches!(self.connection, Connection::Active { .. }) {
+            // A tunnel is up (or coming up): the service is not holding a bare network.
+            self.held = None;
+            self.held_probe = None;
+            return;
+        }
+        if let Some(probe) = &self.held_probe {
+            ctx.request_repaint_after(Duration::from_millis(150));
+            if let Ok(answer) = probe.try_recv() {
+                self.held = answer;
+                self.held_probe = None;
+                self.held_checked = Instant::now();
+            }
+            return;
+        }
+        ctx.request_repaint_after(HELD_CHECK_EVERY);
+        if self.service_state == ServiceState::Running
+            && self.held_checked.elapsed() >= HELD_CHECK_EVERY
+        {
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(deterium_engine::service_armed());
+            });
+            self.held_probe = Some(receiver);
+        } else if self.service_state != ServiceState::Running {
+            self.held = None;
+        }
+    }
+
+    /// The notice that explains why there is no internet and how to get it
+    /// back. Without it, a kill switch that outlives a reboot would look like
+    /// a broken PC.
+    fn show_held_banner(&mut self, ctx: &egui::Context) {
+        let Some(armed_for) = self.held else {
+            return;
+        };
+        let name = self
+            .profile(armed_for)
+            .map_or_else(|| "your VPN".to_string(), |p| p.profile.name.clone());
+        egui::TopBottomPanel::top("held")
+            .frame(
+                egui::Frame::none()
+                    .fill(Color32::from_rgba_unmultiplied(70, 28, 28, 235))
+                    .inner_margin(Margin::symmetric(24.0, 12.0)),
+            )
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Kill switch is holding your internet")
+                        .size(15.0)
+                        .strong()
+                        .color(TEXT),
+                );
+                ui.add_space(2.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "The VPN isn't connected, so nothing leaves this PC except to the server of \"{name}\". Connect to {name} to get online again, or turn the protection off."
+                        ))
+                        .size(13.0)
+                        .color(TEXT),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                let waiting = self.held_release.is_some();
+                if ui
+                    .add_enabled(!waiting, ghost_button("Turn protection off", BAD))
+                    .on_hover_text("Lifts the block now. The kill switch arms again the next time you connect.")
+                    .clicked()
+                {
+                    let (sender, receiver) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(deterium_engine::service_disarm());
+                    });
+                    self.held_release = Some(receiver);
+                }
+            });
     }
 
     fn poll_service(&mut self, ctx: &egui::Context) {

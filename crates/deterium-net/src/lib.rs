@@ -11,6 +11,7 @@ mod elevation;
 mod leak;
 mod plan;
 mod platform;
+mod stats;
 mod system;
 pub mod testing;
 mod tun;
@@ -26,17 +27,19 @@ pub use elevation::{
     current_user_sid, is_elevated, relaunch_elevated, run_elevated_and_wait, ElevateError,
 };
 pub use leak::{
-    build_rules, is_local_network, Action, LeakPolicy, Matcher, Protocol, Rule, Server,
+    build_hold_rules, build_rules, is_local_network, Action, LeakPolicy, Matcher, Protocol, Rule,
+    Server,
 };
 pub use plan::{build_plan, NetworkPlan, Op, PhysicalRoute, PlanError, PlanInput};
 pub use platform::{bring_up, system_platform, Platform, RoutedNetwork, TunnelSpec};
+pub use stats::{adapter_counters, ping, AdapterCounters};
 pub use system::{recover_stale, Journal, NetError, NetworkGuard, SystemNet, TunInfo, Undo};
 pub use tun::{FakeTun, FakeTunPeer, TunDevice};
 
 #[cfg(windows)]
 pub use windows::{
-    clear_adapter_routes, guard_openvpn_leaks, hold_openvpn_adapter, HeldAdapter,
-    OPENVPN_ADAPTER_NAME,
+    clear_adapter_routes, guard_blocked, guard_openvpn_connecting, guard_openvpn_leaks,
+    hold_openvpn_adapter, HeldAdapter, OPENVPN_ADAPTER_NAME,
 };
 
 /// Stand-ins so callers don't need `cfg`: only Windows has Wintun adapters.
@@ -54,6 +57,22 @@ pub fn clear_adapter_routes(_name: &str) -> usize {
 }
 #[cfg(not(windows))]
 pub fn guard_openvpn_leaks(_policy: &LeakPolicy) -> Result<Box<dyn Send>, NetError> {
+    Err(NetError::Unsupported)
+}
+#[cfg(not(windows))]
+pub fn guard_openvpn_connecting(
+    _servers: Vec<Server>,
+    _allow_lan: bool,
+    _allow_dns_lookup: bool,
+) -> Result<Box<dyn Send>, NetError> {
+    Err(NetError::Unsupported)
+}
+#[cfg(not(windows))]
+pub fn guard_blocked(
+    _servers: Vec<Server>,
+    _allow_lan: bool,
+    _allow_dns_lookup: bool,
+) -> Result<Box<dyn Send>, NetError> {
     Err(NetError::Unsupported)
 }
 

@@ -121,8 +121,17 @@ with no operating system involved.
   (verified: 2 s after killing it). With the background service
   (`docs/adr/0004-windows-service.md`) that process is the service, not the
   window, so closing or crashing the app no longer drops protection (verified:
-  app killed, tunnel and rules stayed). Protection before the service starts at
-  boot, and after the service itself dies, would need persistent filters.
+  app killed, tunnel and rules stayed). After the service itself dies, or the
+  PC reboots, the *service* puts a hold back (`build_hold_rules`: only the VPN
+  servers, DHCP and, if allowed, the LAN) the moment it starts again, from a
+  note it keeps in the install folder (see `crates/deterium-service/src/armed.rs`).
+  That is still a dynamic session, so the gap is only the time before the
+  service runs; closing it completely would need persistent filters, which can
+  lock a user out of the network if they are ever wrong.
+* **Every install uses its own sublayer key.** Sublayer keys are global in
+  Windows' filtering engine, and rules are replaced "new ones first, old ones
+  after", so two installs are alive at once. (Checked against the real engine:
+  `cargo test -p deterium-net wfp -- --ignored`, as administrator.)
 * **Established connections are not cut.** WFP's connect layers decide about
   *new* connections; a download already running when the tunnel drops keeps
   its connection.

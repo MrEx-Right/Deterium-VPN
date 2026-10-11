@@ -2,8 +2,9 @@
 //! connection, worked out from the `.ovpn` and from OpenVPN's own log.
 //!
 //! This is pure logic (no firewall calls), so it is unit tested. Installing
-//! the rules happens in `lib.rs` once OpenVPN reports it is connected: before
-//! that the PC is exactly as exposed as it was without a VPN, and after it the
+//! the rules happens in `lib.rs`: a hold goes in before OpenVPN starts (only
+//! the VPN server(s), DHCP and, if allowed, the local network can be reached),
+//! and once OpenVPN reports it is connected the full rules replace it: the
 //! tunnel adapter, the VPN server(s), DHCP and (if allowed) the local network
 //! are permitted and everything else is blocked.
 
@@ -112,6 +113,12 @@ pub fn resolve_servers(
         }
     }
     servers
+}
+
+/// Whether OpenVPN will have to look a name up itself (any `remote` or proxy
+/// that is not an IP literal). Then DNS has to stay open while it connects.
+pub fn needs_name_lookup(remotes: &[Remote]) -> bool {
+    remotes.iter().any(|r| r.host.parse::<IpAddr>().is_err())
 }
 
 /// The system resolver.
@@ -234,6 +241,17 @@ mod tests {
         assert_eq!(servers.len(), 3);
         assert!(servers.contains(&Server::udp("203.0.113.9:1194".parse().unwrap())));
         assert!(servers.contains(&Server::tcp("198.51.100.2:443".parse().unwrap())));
+    }
+
+    #[test]
+    fn only_names_need_a_lookup() {
+        assert!(needs_name_lookup(&parse_remotes(CONFIG)));
+        assert!(!needs_name_lookup(&parse_remotes(
+            "remote 203.0.113.9 1194 udp
+http-proxy 10.0.0.5 3128
+"
+        )));
+        assert!(!needs_name_lookup(&[]));
     }
 
     #[test]

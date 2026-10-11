@@ -16,6 +16,15 @@ mod killswitch;
 
 pub use bundled::{available as bundled_available, version as bundled_version};
 
+/// The servers a `.ovpn` can connect to (names resolved), for callers that
+/// need to keep a firewall hole open to them without running OpenVPN.
+pub fn configured_servers(raw_config: &str) -> Vec<Server> {
+    killswitch::resolve_servers(
+        &killswitch::parse_remotes(raw_config),
+        killswitch::system_resolver,
+    )
+}
+
 use deterium_core::validate::risky_openvpn_directives;
 use deterium_core::{AdapterError, ProtocolAdapter, SecurityOptions, ServerProfile, TunnelStatus};
 use deterium_net::{LeakPolicy, Server};
@@ -49,9 +58,23 @@ struct Shared {
     push: Mutex<killswitch::PushInfo>,
     /// The installed kill-switch rules. Dropping them removes the rules.
     guard: Mutex<Option<Box<dyn Send>>>,
+    /// The block that holds from before OpenVPN starts until the full rules
+    /// replace it (or the connection fails before it ever came up).
+    hold: Mutex<Option<Hold>>,
+}
+
+/// The temporary block while OpenVPN is connecting.
+struct Hold {
+    guard: Box<dyn Send>,
+    /// The servers it permits.
+    servers: Vec<Server>,
 }
 
 type Installer = Box<dyn Fn(&LeakPolicy) -> Result<Box<dyn Send>, String> + Send + Sync>;
+/// Installs a hold: the servers to permit, whether the local network is
+/// allowed, and whether DNS lookups are (OpenVPN resolving its own `remote`).
+type HoldInstaller =
+    Box<dyn Fn(Vec<Server>, bool, bool) -> Result<Box<dyn Send>, String> + Send + Sync>;
 
 /// Everything needed to put the kill switch in place once the tunnel is up.
 struct Protection {
@@ -61,20 +84,85 @@ struct Protection {
     /// The servers the installed rules were built for.
     installed_for: Mutex<Vec<Server>>,
     installer: Installer,
+    hold_installer: HoldInstaller,
+    /// The config names servers OpenVPN has to look up itself.
+    allow_dns_lookup: bool,
 }
 
 impl Protection {
     fn new(
         security: SecurityOptions,
         configured: Vec<Server>,
+        allow_dns_lookup: bool,
         installer: Installer,
+        hold_installer: HoldInstaller,
     ) -> Option<Self> {
         (security.kill_switch || security.block_dns_leaks).then(|| Self {
             security,
             configured,
             installed_for: Mutex::new(Vec::new()),
             installer,
+            hold_installer,
+            allow_dns_lookup,
         })
+    }
+
+    /// Blocks everything except the VPN servers, *before* OpenVPN starts, so
+    /// not even the first seconds of the connection are exposed. Only for the
+    /// kill switch: DNS-leak blocking alone must not cut off name lookups
+    /// while connecting. Fails closed, like [`Protection::install`].
+    fn start_hold(&self, shared: &Shared) -> Result<(), String> {
+        if !self.security.kill_switch {
+            return Ok(());
+        }
+        let guard = (self.hold_installer)(
+            self.configured.clone(),
+            self.security.allow_lan,
+            self.allow_dns_lookup,
+        )?;
+        *shared.hold.lock().expect("hold mutex poisoned") = Some(Hold {
+            guard,
+            servers: self.configured.clone(),
+        });
+        Ok(())
+    }
+
+    /// If OpenVPN is talking to a server the hold doesn't permit yet (a name
+    /// that resolved differently, a `<connection>` block), let it through.
+    fn widen_hold(&self, shared: &Shared) {
+        let mut hold = shared.hold.lock().expect("hold mutex poisoned");
+        let Some(current) = hold.as_mut() else {
+            return;
+        };
+        let mut servers = current.servers.clone();
+        for learned in shared
+            .learned
+            .lock()
+            .expect("learned mutex poisoned")
+            .iter()
+        {
+            if !servers.contains(learned) {
+                servers.push(*learned);
+            }
+        }
+        if servers == current.servers {
+            return;
+        }
+        // New rules first, old ones after: there is never a moment without any.
+        match (self.hold_installer)(
+            servers.clone(),
+            self.security.allow_lan,
+            self.allow_dns_lookup,
+        ) {
+            Ok(guard) => {
+                let old = std::mem::replace(&mut current.guard, guard);
+                current.servers = servers;
+                drop(old);
+            }
+            Err(why) => shared.push_log(format!(
+                "Deterium: couldn't let the connection reach the server OpenVPN is using ({why})"
+            )),
+        }
     }
 
     /// Installs (or refreshes) the rules. Fails closed: an error is reported to
@@ -107,6 +195,8 @@ impl Protection {
         let old = guard.replace(new_guard);
         drop(old);
         *installed = servers;
+        // The full rules are in force: the temporary block is no longer needed.
+        drop(shared.hold.lock().expect("hold mutex poisoned").take());
         Ok(())
     }
 }
@@ -120,6 +210,28 @@ impl Shared {
             learned: Mutex::new(Vec::new()),
             push: Mutex::new(killswitch::PushInfo::default()),
             guard: Mutex::new(None),
+            hold: Mutex::new(None),
+        }
+    }
+
+    /// The connection failed before it ever came up: lift the temporary block
+    /// so a failed attempt (wrong password, dead server) doesn't leave the PC
+    /// offline. A tunnel that was up keeps its kill switch.
+    fn release_hold_if_never_connected(&self) {
+        if self.guard.lock().expect("guard mutex poisoned").is_some() {
+            return;
+        }
+        if self
+            .hold
+            .lock()
+            .expect("hold mutex poisoned")
+            .take()
+            .is_some()
+        {
+            self.push_log(
+                "Deterium: the connection did not come up, so the temporary block was lifted and your internet access is back to normal"
+                    .to_string(),
+            );
         }
     }
 
@@ -238,13 +350,20 @@ impl OpenVpnTunnelHandle {
             .collect()
     }
 
-    /// Whether the kill switch / DNS-leak rules are currently in place.
+    /// Whether the kill switch / DNS-leak rules are currently in place
+    /// (including the temporary block that holds while connecting).
     pub fn leak_protection(&self) -> bool {
         self.shared
             .guard
             .lock()
             .expect("guard mutex poisoned")
             .is_some()
+            || self
+                .shared
+                .hold
+                .lock()
+                .expect("hold mutex poisoned")
+                .is_some()
     }
 
     fn shutdown(&mut self) {
@@ -277,6 +396,7 @@ impl OpenVpnTunnelHandle {
         }
         // The firewall rules go last, after OpenVPN, its routes and its adapter.
         *self.shared.guard.lock().expect("guard mutex poisoned") = None;
+        *self.shared.hold.lock().expect("hold mutex poisoned") = None;
         self.shared.set_status(TunnelStatus::Disconnected);
     }
 }
@@ -365,6 +485,44 @@ impl ProtocolAdapter for OpenVpnAdapter {
             None
         };
 
+        // The kill switch is in force from *before* OpenVPN starts: a temporary
+        // block that permits only the VPN servers (names in the config are
+        // resolved now, before any rules exist). The full rules replace it the
+        // moment OpenVPN says it is connected. If it can't be installed the
+        // connection is refused rather than started unprotected; on any early
+        // return below, dropping `shared` lifts it again.
+        let shared = Arc::new(Shared::new());
+        let protection = if self.real_program && cfg!(windows) {
+            let remotes = killswitch::parse_remotes(&config.raw_config);
+            let configured = if config.security.kill_switch {
+                killswitch::resolve_servers(&remotes, killswitch::system_resolver)
+            } else {
+                Vec::new()
+            };
+            Protection::new(
+                config.security.clone(),
+                configured,
+                killswitch::needs_name_lookup(&remotes),
+                Box::new(|policy| {
+                    deterium_net::guard_openvpn_leaks(policy).map_err(|e| e.to_string())
+                }),
+                Box::new(|servers, allow_lan, allow_dns| {
+                    deterium_net::guard_openvpn_connecting(servers, allow_lan, allow_dns)
+                        .map_err(|e| e.to_string())
+                }),
+            )
+            .map(Arc::new)
+        } else {
+            None
+        };
+        if let Some(protection) = &protection {
+            protection.start_hold(&shared).map_err(|e| {
+                AdapterError::ConnectFailed(format!(
+                    "couldn't block traffic while connecting ({e}); not connecting unprotected"
+                ))
+            })?;
+        }
+
         let work_dir = make_work_dir()
             .map_err(|e| AdapterError::ConnectFailed(format!("create temp directory: {e}")))?;
         let config_path = work_dir.join("profile.ovpn");
@@ -441,33 +599,6 @@ impl ProtocolAdapter for OpenVpnAdapter {
             AdapterError::ConnectFailed(format!("start {}: {e}", binary.display()))
         })?;
 
-        let shared = Arc::new(Shared::new());
-
-        // The kill switch is installed by the reader thread the moment OpenVPN
-        // says it is connected (not before: until then the PC is no more exposed
-        // than it was without a VPN). Names in the config are resolved now,
-        // before any rules exist.
-        let protection = if self.real_program && cfg!(windows) {
-            let configured = if config.security.kill_switch {
-                killswitch::resolve_servers(
-                    &killswitch::parse_remotes(&config.raw_config),
-                    killswitch::system_resolver,
-                )
-            } else {
-                Vec::new()
-            };
-            Protection::new(
-                config.security.clone(),
-                configured,
-                Box::new(|policy| {
-                    deterium_net::guard_openvpn_leaks(policy).map_err(|e| e.to_string())
-                }),
-            )
-            .map(Arc::new)
-        } else {
-            None
-        };
-
         // Reader threads are deliberately detached: they end when OpenVPN's
         // pipes close, and waiting for that on shutdown could hang if a
         // grandchild process keeps a pipe open.
@@ -536,11 +667,16 @@ fn handle_line(
     {
         let learned = killswitch::servers_from_log(line);
         if !learned.is_empty() {
-            let mut known = shared.learned.lock().expect("learned mutex poisoned");
-            for server in learned {
-                if !known.contains(&server) {
-                    known.push(server);
+            {
+                let mut known = shared.learned.lock().expect("learned mutex poisoned");
+                for server in learned {
+                    if !known.contains(&server) {
+                        known.push(server);
+                    }
                 }
+            }
+            if let Some(protection) = protection {
+                protection.widen_hold(shared);
             }
         }
         if let Some(push) = killswitch::push_from_log(line) {
@@ -549,6 +685,9 @@ fn handle_line(
     }
 
     if let Some(status) = interpret_line(line) {
+        if status == TunnelStatus::Error {
+            shared.release_hold_if_never_connected();
+        }
         if status == TunnelStatus::Connected {
             if let Some(protection) = protection {
                 if let Err(why) = protection.install(shared) {
@@ -584,6 +723,7 @@ fn spawn_exit_watcher(child: Arc<Mutex<Child>>, shared: Arc<Shared>) -> JoinHand
         if let Some(code) = exited {
             if !shared.stopping.load(Ordering::Relaxed) {
                 shared.push_log(format!("OpenVPN exited ({code})"));
+                shared.release_hold_if_never_connected();
                 shared.set_status(TunnelStatus::Error);
             }
             return;
@@ -771,6 +911,7 @@ fn hide_console_window(command: &mut Command) {
 mod tests {
     use super::*;
     use deterium_core::import::parse_openvpn;
+    use std::sync::atomic::AtomicUsize;
 
     fn profile(config: &str) -> ServerProfile {
         parse_openvpn(config, "test").unwrap().profile
@@ -843,6 +984,7 @@ mod tests {
                 block_dns_leaks: true,
             },
             vec![Server::tcp("203.0.113.5:443".parse().unwrap())],
+            false,
             Box::new(move |policy| {
                 if fail {
                     return Err("filter refused".into());
@@ -850,9 +992,186 @@ mod tests {
                 log.lock().unwrap().push(policy.clone());
                 Ok(Box::new(Release(flag.clone())) as Box<dyn Send>)
             }),
+            Box::new(|_, _, _| Ok(Box::new(()) as Box<dyn Send>)),
         )
         .unwrap();
         (protection, seen, released)
+    }
+
+    /// What a hold was asked to permit: servers, local network, DNS lookups.
+    type HoldCall = (Vec<Server>, bool, bool);
+
+    /// A protection whose hold "firewall" records its calls and counts how
+    /// many holds are alive (a dropped hold is a lifted block).
+    fn hold_protection(
+        names_in_config: bool,
+        fail: bool,
+    ) -> (Protection, Arc<Mutex<Vec<HoldCall>>>, Arc<AtomicUsize>) {
+        struct Alive(Arc<AtomicUsize>);
+        impl Drop for Alive {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let alive = Arc::new(AtomicUsize::new(0));
+        let (log, count) = (calls.clone(), alive.clone());
+        let protection = Protection::new(
+            SecurityOptions {
+                kill_switch: true,
+                allow_lan: false,
+                block_dns_leaks: false,
+            },
+            vec![Server::udp("203.0.113.5:1194".parse().unwrap())],
+            names_in_config,
+            Box::new(|_| Ok(Box::new(()) as Box<dyn Send>)),
+            Box::new(move |servers, lan, dns| {
+                if fail {
+                    return Err("filter refused".into());
+                }
+                log.lock().unwrap().push((servers, lan, dns));
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(Alive(count.clone())) as Box<dyn Send>)
+            }),
+        )
+        .unwrap();
+        (protection, calls, alive)
+    }
+
+    #[test]
+    fn the_hold_goes_in_before_openvpn_runs_and_permits_only_the_configured_servers() {
+        let (protection, calls, alive) = hold_protection(true, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+
+        assert_eq!(alive.load(Ordering::SeqCst), 1);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].0,
+            vec![Server::udp("203.0.113.5:1194".parse().unwrap())]
+        );
+        assert!(!calls[0].1, "the local network was not asked for");
+        assert!(calls[0].2, "OpenVPN has a name to look up itself");
+        assert!(shared.hold.lock().unwrap().is_some());
+        // The tunnel is not up yet, but traffic is already being held back.
+        assert!(shared.guard.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_hold_that_cannot_be_installed_is_an_error_not_silence() {
+        let (protection, _, alive) = hold_protection(false, true);
+        let shared = Shared::new();
+        assert!(protection.start_hold(&shared).is_err());
+        assert_eq!(alive.load(Ordering::SeqCst), 0);
+        assert!(shared.hold.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn dns_blocking_alone_does_not_hold_anything() {
+        let (mut protection, calls, _) = hold_protection(false, false);
+        protection.security.kill_switch = false;
+        protection.security.block_dns_leaks = true;
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(shared.hold.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_server_openvpn_turns_out_to_use_is_let_through_without_a_gap() {
+        let (protection, calls, alive) = hold_protection(false, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+
+        handle_line(
+            "TCP/UDP: Preserving recently used remote address: [AF_INET]192.0.2.77:443",
+            &shared,
+            Some(&protection),
+            None,
+        );
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "the hold was widened once");
+        assert!(calls[1]
+            .0
+            .contains(&Server::tcp("192.0.2.77:443".parse().unwrap())));
+        assert!(calls[1]
+            .0
+            .contains(&Server::udp("203.0.113.5:1194".parse().unwrap())));
+        assert_eq!(
+            alive.load(Ordering::SeqCst),
+            1,
+            "the old hold is released after the new one exists"
+        );
+    }
+
+    #[test]
+    fn a_server_the_hold_already_permits_does_not_reinstall_it() {
+        let (protection, calls, _) = hold_protection(false, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+        for _ in 0..2 {
+            handle_line(
+                "UDPv4 link remote: [AF_INET]203.0.113.5:1194",
+                &shared,
+                Some(&protection),
+                None,
+            );
+        }
+        // The log line names both protocols; UDP was configured, TCP is new.
+        assert_eq!(calls.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_full_rules_replace_the_hold_when_the_tunnel_comes_up() {
+        let (protection, _, alive) = hold_protection(false, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+        handle_line(UP, &shared, Some(&protection), None);
+
+        assert_eq!(*shared.status.lock().unwrap(), TunnelStatus::Connected);
+        assert!(shared.guard.lock().unwrap().is_some());
+        assert!(shared.hold.lock().unwrap().is_none());
+        assert_eq!(alive.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_connection_that_fails_before_it_came_up_does_not_leave_the_pc_offline() {
+        let (protection, _, alive) = hold_protection(false, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+        handle_line(
+            "AUTH: Received control message: AUTH_FAILED",
+            &shared,
+            Some(&protection),
+            None,
+        );
+        assert_eq!(*shared.status.lock().unwrap(), TunnelStatus::Error);
+        assert_eq!(alive.load(Ordering::SeqCst), 0, "the block is lifted");
+        assert!(shared
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|l| l.contains("back to normal")));
+    }
+
+    #[test]
+    fn a_tunnel_that_was_up_keeps_its_kill_switch_when_it_errors() {
+        let (protection, _, _) = hold_protection(false, false);
+        let shared = Shared::new();
+        protection.start_hold(&shared).unwrap();
+        handle_line(UP, &shared, Some(&protection), None);
+        handle_line(
+            "AUTH: Received control message: AUTH_FAILED",
+            &shared,
+            Some(&protection),
+            None,
+        );
+        assert!(
+            shared.guard.lock().unwrap().is_some(),
+            "once connected, an error must not open the floodgates"
+        );
     }
 
     const PUSH: &str = "PUSH: Received control message: 'PUSH_REPLY,redirect-gateway def1,dhcp-option DNS 10.8.0.1,ifconfig 10.8.0.2 255.255.255.0'";
@@ -953,7 +1272,14 @@ mod tests {
             allow_lan: true,
             block_dns_leaks: false,
         };
-        assert!(Protection::new(off, vec![], Box::new(|_| Err("unused".into()))).is_none());
+        assert!(Protection::new(
+            off,
+            vec![],
+            false,
+            Box::new(|_| Err("unused".into())),
+            Box::new(|_, _, _| Err("unused".into())),
+        )
+        .is_none());
     }
 
     #[test]

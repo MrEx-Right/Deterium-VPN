@@ -64,6 +64,12 @@ pub enum ErrorKind {
 pub struct ServiceStatus {
     /// The tunnel the service is holding, if any.
     pub active: Option<ActiveTunnel>,
+    /// The profile whose kill switch the service is keeping armed: after a
+    /// restart or a reboot it blocks the network (except the VPN server) until
+    /// the user connects again or turns the protection off. Absent from an
+    /// older service.
+    #[serde(default)]
+    pub armed: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,6 +123,7 @@ mod tests {
     #[test]
     fn status_responses_round_trip() {
         let status = Response::Status(ServiceStatus {
+            armed: Some(Uuid::nil()),
             active: Some(ActiveTunnel {
                 profile_id: Uuid::nil(),
                 status: TunnelStatus::Reconnecting,
@@ -134,11 +141,21 @@ mod tests {
         let Response::Status(back) = serde_json::from_str(&line).unwrap() else {
             panic!("wrong variant");
         };
+        assert_eq!(back.armed, Some(Uuid::nil()));
         let active = back.active.unwrap();
         assert_eq!(active.status, TunnelStatus::Reconnecting);
         assert!(active.leak_protection);
         assert_eq!(active.uptime_secs, 42);
         assert_eq!(active.stats.unwrap().tx_bytes, 9);
+    }
+
+    #[test]
+    fn a_status_from_a_service_without_armed_still_parses() {
+        let old = r#"{"type":"status","active":null}"#;
+        let Response::Status(status) = serde_json::from_str(old).unwrap() else {
+            panic!("wrong variant");
+        };
+        assert_eq!(status.armed, None);
     }
 
     #[test]

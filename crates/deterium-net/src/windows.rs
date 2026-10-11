@@ -5,7 +5,7 @@
 //! this.
 
 use crate::cidr::Cidr;
-use crate::leak::{build_rules, LeakPolicy};
+use crate::leak::{build_hold_rules, build_rules, LeakPolicy};
 use crate::plan::{NetworkPlan, Op, PhysicalRoute};
 use crate::platform::Platform;
 use crate::system::{Journal, NetError, NetworkGuard, SystemNet, TunInfo, Undo};
@@ -610,6 +610,40 @@ pub fn guard_openvpn_leaks(policy: &LeakPolicy) -> Result<Box<dyn Send>, NetErro
     }
     // SAFETY: reading the plain integer view of the union we just filled in.
     let rules = build_rules(policy, unsafe { luid.Value });
+    Ok(Box::new(crate::wfp::install(&rules)?))
+}
+
+/// Puts the PC in a "hold": everything is blocked except loopback, DHCP, the
+/// given VPN servers (and the local network if asked). Used before OpenVPN has
+/// started (the OpenVPN adapter must exist, see [`hold_openvpn_adapter`]) so
+/// the first seconds of a connection are not exposed. Same dynamic WFP session
+/// as the other rules: Windows removes it the moment this process ends.
+pub fn guard_openvpn_connecting(
+    servers: Vec<crate::leak::Server>,
+    allow_lan: bool,
+    allow_dns_lookup: bool,
+) -> Result<Box<dyn Send>, NetError> {
+    let alias = wide(OPENVPN_ADAPTER_NAME);
+    let mut luid = NET_LUID_LH { Value: 0 };
+    // SAFETY: NUL-terminated name; Windows fills `luid`.
+    let code = unsafe { ConvertInterfaceAliasToLuid(alias.as_ptr(), &mut luid) };
+    if code != NO_ERROR {
+        return Err(os_error("ConvertInterfaceAliasToLuid", code));
+    }
+    // SAFETY: reading the plain integer view of the union we just filled in.
+    let rules = build_hold_rules(servers, allow_lan, unsafe { luid.Value }, allow_dns_lookup);
+    Ok(Box::new(crate::wfp::install(&rules)?))
+}
+
+/// A hold with no tunnel at all: the service's armed state after a restart or
+/// a reboot, while it waits for the user to connect again. DNS lookups are
+/// only permitted while a new connection is being set up.
+pub fn guard_blocked(
+    servers: Vec<crate::leak::Server>,
+    allow_lan: bool,
+    allow_dns_lookup: bool,
+) -> Result<Box<dyn Send>, NetError> {
+    let rules = build_hold_rules(servers, allow_lan, 0, allow_dns_lookup);
     Ok(Box::new(crate::wfp::install(&rules)?))
 }
 

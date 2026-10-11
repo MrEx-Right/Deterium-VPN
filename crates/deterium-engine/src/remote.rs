@@ -182,6 +182,36 @@ pub fn connect_via_service(profile: &ServerProfile) -> Result<Option<RemoteTunne
     }
 }
 
+/// The profile whose kill switch the service is keeping armed while no
+/// tunnel is up (after a restart or a reboot), if any. In that state the
+/// network is blocked except for the VPN server.
+pub fn service_armed() -> Option<Uuid> {
+    if deterium_ipc::service_state() != ServiceState::Running {
+        return None;
+    }
+    let client = Client::new();
+    client.handshake().ok()?;
+    match client.call(&Request::Status).ok()? {
+        Response::Status(status) if status.active.is_none() => status.armed,
+        _ => None,
+    }
+}
+
+/// Tells the service to stop holding the network: the kill switch is turned
+/// off until the next connection. Also what a plain disconnect does.
+pub fn service_disarm() -> Result<(), String> {
+    let client = Client::new();
+    client.handshake().map_err(|e| e.to_string())?;
+    match client
+        .call(&Request::Disconnect)
+        .map_err(|e| e.to_string())?
+    {
+        Response::Ok => Ok(()),
+        Response::Error { message, .. } => Err(message),
+        other => Err(format!("unexpected reply: {other:?}")),
+    }
+}
+
 /// Picks up a tunnel the service already holds, e.g. after the app was
 /// closed and opened again. `Ok(None)`: no service, or it holds nothing.
 pub fn attach_to_service() -> Result<Option<RemoteTunnel>, IpcError> {

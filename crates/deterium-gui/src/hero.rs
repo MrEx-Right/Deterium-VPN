@@ -262,19 +262,6 @@ pub fn add_row(ui: &mut egui::Ui) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub fn stat_tile(ui: &mut egui::Ui, label: &str, value: &str) {
-    card(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.label(
-            RichText::new(label)
-                .size(10.5)
-                .color(DIM)
-                .extra_letter_spacing(1.2),
-        );
-        ui.add(egui::Label::new(RichText::new(value).size(17.0).strong().color(TEXT)).truncate());
-    });
-}
-
 pub fn detail_rows(ui: &mut egui::Ui, profile: &ServerProfile) {
     let row = |ui: &mut egui::Ui, key: &str, value: &str| {
         ui.label(RichText::new(key).size(13.0).color(DIM));

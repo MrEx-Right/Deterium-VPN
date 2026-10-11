@@ -146,6 +146,8 @@ fn remove_deployed_files() {
             "wintun.dll",
             "Deterium.exe.new",
             "wintun.dll.new",
+            crate::armed::FILE_NAME,
+            "armed.json.new",
         ] {
             let _ = std::fs::remove_file(dir.join(name));
         }
@@ -203,6 +205,8 @@ pub fn install(options: &InstallOptions) -> Result<(), String> {
         deploy(&running_exe)?
     };
     deterium_net::ensure_wintun().map_err(|e| format!("couldn't set up the Wintun driver: {e}"))?;
+    // A note left by an earlier install must not put a fresh one on hold.
+    crate::armed::clear_standard();
 
     let manager = open_manager(SC_MANAGER_CREATE_SERVICE)?;
     let name = wide(SERVICE_NAME);

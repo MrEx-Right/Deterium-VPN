@@ -81,8 +81,16 @@ rules.
   rules, so a bug can't leave someone permanently offline. The service restarts
   itself within seconds and the crash journal cleans up leftover routes on start.
 * Persistent (boot-time) filters, which would also protect the moments before
-  the service starts, are a possible later step and deliberately not part of
-  this one: they can lock a user out of the network if they are ever wrong.
+  the service starts, are deliberately not used: they can lock a user out of
+  the network if they are ever wrong. Instead (2026-10-11) the service keeps
+  the kill switch *armed*: once a tunnel with the kill switch is up it writes a
+  note (`armed.json`, administrators-only install folder), and a service that
+  starts and finds it holds the network (VPN server, DHCP and, if allowed, the
+  LAN stay reachable) before it answers anyone. The hold is still a dynamic
+  session owned by the service, so stopping the service always gives the
+  network back; the note is removed by "Disconnect" / "Turn protection off", a
+  stop somebody asked for and uninstalling, but kept when Windows itself shuts
+  down. A missing, damaged or server-less note means "not armed".
 * The installer (MSI/NSIS, not written yet) must place both executables and
   `wintun.dll` in Program Files and register the service with the invoking
   user's SID; `deterium-service install` is what it should call.

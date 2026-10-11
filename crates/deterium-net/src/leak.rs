@@ -191,6 +191,50 @@ pub fn build_rules(policy: &LeakPolicy, tunnel_luid: u64) -> Vec<Rule> {
     rules
 }
 
+/// The rules for a "hold" state: the kill switch is up but the tunnel is not
+/// (yet) carrying traffic. Used while a connection is being set up and by the
+/// service after a restart, so nothing leaves the PC except what is needed to
+/// reach the VPN server.
+///
+/// `tunnel_luid` is 0 when no adapter exists; the tunnel permit is then left
+/// out altogether rather than written with an identity nothing has. With
+/// `allow_dns_lookup`, plain DNS is permitted too: OpenVPN resolves the names
+/// in its own config, and without it a `remote vpn.example.com` could never
+/// connect. Only the server's name leaks that way, and only until the tunnel
+/// is up.
+pub fn build_hold_rules(
+    servers: Vec<Server>,
+    allow_lan: bool,
+    tunnel_luid: u64,
+    allow_dns_lookup: bool,
+) -> Vec<Rule> {
+    let policy = LeakPolicy {
+        kill_switch: true,
+        allow_lan,
+        block_dns_leaks: false,
+        servers,
+    };
+    let mut rules = build_rules(&policy, tunnel_luid);
+    if tunnel_luid == 0 {
+        rules.retain(|r| r.name != "tunnel adapter");
+    }
+    if allow_dns_lookup {
+        for (name, protocol) in [
+            ("DNS lookup of the VPN server (UDP)", Protocol::Udp),
+            ("DNS lookup of the VPN server (TCP)", Protocol::Tcp),
+        ] {
+            rules.push(Rule {
+                name,
+                action: Action::Permit,
+                weight: 12,
+                when: vec![Matcher::Protocol(protocol), Matcher::RemotePort(53)],
+            });
+        }
+        rules.sort_by_key(|r| std::cmp::Reverse(r.weight));
+    }
+    rules
+}
+
 /// Addresses that are never worth firewalling off (used by callers that want
 /// to describe the policy to the user).
 pub fn is_local_network(ip: IpAddr) -> bool {
@@ -336,6 +380,61 @@ mod tests {
         let rules = build_rules(&policy(true, false, false), 4242);
         let tunnel = rules.iter().find(|r| r.name == "tunnel adapter").unwrap();
         assert_eq!(tunnel.when, vec![Matcher::TunnelInterface(4242)]);
+    }
+
+    fn hold(allow_dns: bool) -> Vec<Rule> {
+        build_hold_rules(
+            vec![Server::udp("203.0.113.10:1194".parse().unwrap())],
+            false,
+            0,
+            allow_dns,
+        )
+    }
+
+    #[test]
+    fn a_hold_blocks_everything_but_the_vpn_servers_loopback_and_dhcp() {
+        let rules = hold(false);
+        let permits: Vec<_> = rules
+            .iter()
+            .filter(|r| r.action == Action::Permit)
+            .map(|r| r.name)
+            .collect();
+        assert!(permits.contains(&"VPN server"));
+        assert!(permits.contains(&"loopback"));
+        assert!(permits.contains(&"DHCPv4"));
+        assert!(!permits.contains(&"local network"), "LAN was not asked for");
+        let last = rules.last().unwrap();
+        assert_eq!(last.name, "everything else");
+        assert_eq!(last.action, Action::Block);
+        assert!(last.when.is_empty());
+    }
+
+    #[test]
+    fn a_hold_without_dns_lookup_never_permits_dns() {
+        assert!(!hold(false)
+            .iter()
+            .any(|r| r.when.contains(&Matcher::RemotePort(53))));
+    }
+
+    #[test]
+    fn dns_lookup_is_permitted_before_the_catch_all_block_and_stays_ordered() {
+        let rules = hold(true);
+        let dns = rules
+            .iter()
+            .position(|r| r.when.contains(&Matcher::RemotePort(53)))
+            .expect("DNS permit");
+        let block = rules.iter().position(|r| r.when.is_empty()).unwrap();
+        assert!(dns < block);
+        assert_eq!(rules[dns].action, Action::Permit);
+        assert!(rules.windows(2).all(|w| w[0].weight >= w[1].weight));
+    }
+
+    #[test]
+    fn a_hold_with_no_adapter_has_no_tunnel_rule_and_one_with_an_adapter_has() {
+        assert!(!hold(false).iter().any(|r| r.name == "tunnel adapter"));
+        let with = build_hold_rules(Vec::new(), false, 99, false);
+        let tunnel = with.iter().find(|r| r.name == "tunnel adapter").unwrap();
+        assert_eq!(tunnel.when, vec![Matcher::TunnelInterface(99)]);
     }
 
     #[test]

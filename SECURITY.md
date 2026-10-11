@@ -36,11 +36,28 @@ The design decisions behind these are written down so they can be reviewed:
 
 These are documented and on the roadmap:
 
-- The kill switch lasts as long as the background service runs; it is not
-  enforced before the service starts at boot, or after the service itself dies
-  (it restarts within seconds). Without the service installed it lasts only as
-  long as the app.
-- The OpenVPN kill switch is installed the moment OpenVPN reports it is connected (like the WireGuard one it needs the tunnel adapter to exist), so the first seconds of a connection are as exposed as without a VPN.
+- The kill switch is a firewall session owned by the background service, so it
+  can never outlive the service (a bug cannot lock you out of your network).
+  Once a tunnel with the kill switch has come up, the service writes a note
+  (`armed.json` in `C:\Program Files\Deterium`, administrators only). A service
+  that starts and finds the note, after a reboot or after Windows restarted a
+  crashed one, blocks the network before it answers anyone, except to the VPN
+  server, until you connect again or press "Turn protection off" (or stop the
+  service on purpose, or uninstall it). What stays uncovered is the time before
+  the service is running: a few seconds while Windows boots, and about 5 s
+  while it restarts a crashed service. Without the service installed the kill
+  switch lasts only as long as the app.
+- While the network is held after a restart there is no internet until you
+  connect or turn the protection off: there is no auto-connect yet.
+- The OpenVPN kill switch is in force before OpenVPN starts: only the VPN
+  server (and DHCP, and the local network if allowed) can be reached while it
+  connects. If the `.ovpn` uses a name for its server, plain DNS is open during
+  that time so OpenVPN can look it up (the server's name can leak that way, and
+  nothing else of yours). A connection that fails before it ever came up (wrong
+  password, dead server) lifts the block again; a tunnel that was up keeps it.
+- The WireGuard kill switch is put in place when the tunnel is built, not
+  before, so the first moments of a WireGuard connection are as exposed as
+  without a VPN.
 - The built-in OpenVPN is run as a separate program from an administrator-only folder; its own vulnerabilities are fixed by updating Deterium (see THIRD-PARTY.md for the bundled version).
 - Secrets are protected against other Windows accounts and against copying the
   files to another PC, **not** against malware already running as the same user.

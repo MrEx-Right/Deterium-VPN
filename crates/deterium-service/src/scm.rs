@@ -19,6 +19,9 @@ use windows_sys::Win32::System::Services::{
 };
 
 static STOP: AtomicBool = AtomicBool::new(false);
+/// Windows itself is shutting down (as opposed to somebody stopping the
+/// service): the kill switch must then stay armed for the next boot.
+static SYSTEM_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static STATUS_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ALLOWED_SIDS: OnceLock<Vec<String>> = OnceLock::new();
 static LAST_STATE: Mutex<u32> = Mutex::new(SERVICE_START_PENDING);
@@ -89,6 +92,9 @@ unsafe extern "system" fn control_handler(
 ) -> u32 {
     match control {
         SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
+            if control == SERVICE_CONTROL_SHUTDOWN {
+                SYSTEM_SHUTDOWN.store(true, Ordering::SeqCst);
+            }
             STOP.store(true, Ordering::SeqCst);
             report(SERVICE_STOP_PENDING, 0);
         }
@@ -128,6 +134,11 @@ pub fn serve_until_stopped(
     stop: &'static AtomicBool,
     on_ready: impl FnOnce(),
 ) -> Result<(), String> {
+    // First of all, before anything can connect: if the kill switch was armed
+    // when the service last ran (a reboot, a crash), hold the network now.
+    let manager = Arc::new(Manager::new(Box::new(EngineConnector)));
+    manager.restore();
+
     let leftovers = deterium_engine::recover_leftovers();
     if leftovers > 0 {
         crate::log(&format!(
@@ -135,7 +146,6 @@ pub fn serve_until_stopped(
         ));
     }
 
-    let manager = Arc::new(Manager::new(Box::new(EngineConnector)));
     let allowed = ALLOWED_SIDS.get().cloned().unwrap_or_default();
     let stop_flag = Arc::new(AtomicBool::new(false));
 
@@ -165,12 +175,15 @@ pub fn serve_until_stopped(
     on_ready();
 
     while !stop.load(Ordering::SeqCst) && !server.is_finished() {
+        manager.tick();
         thread::sleep(Duration::from_millis(200));
     }
 
     crate::log("service stopping");
     let _ = deterium_ipc::stop_server(PIPE_NAME, &stop_flag, server);
-    manager.shutdown();
+    // A stop somebody asked for turns the kill switch off; Windows shutting
+    // down keeps it armed for the next boot.
+    manager.shutdown(!SYSTEM_SHUTDOWN.load(Ordering::SeqCst));
     crate::log("service stopped");
     Ok(())
 }

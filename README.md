@@ -32,14 +32,14 @@ Most "VPN apps" are really VPN *providers*: they run the exit servers, see your 
 |---|---|
 | **Protocols** | WireGuard (in-process) and OpenVPN 2.6.17 (bundled, unpacked on first use) |
 | **Full tunnel** | Traffic, DNS and HTTPS go through your server; disconnecting restores the network exactly as it was |
-| **Kill switch + DNS-leak block** | Windows Filtering Platform rules for both protocols: new connections outside the tunnel are blocked |
+| **Kill switch + DNS-leak block** | Windows Filtering Platform rules for both protocols: new connections outside the tunnel are blocked. OpenVPN is held back from its very first second, and after a reboot or a service restart the network stays blocked (except to your VPN server) until you connect again or turn the protection off |
 | **Crash-safe** | The rules belong to the service process, so Windows lifts them by itself if it dies, and leftovers from a crashed run are cleaned up on the next start |
 | **Health detection** | A silent server turns the status to *Reconnecting*, and the tunnel recovers on its own |
 | **Background service** | Install once (one permission prompt) and never need administrator rights again; the tunnel survives closing or crashing the window |
 | **System tray** | Colour-coded icon (grey / blue / green / orange), connect and disconnect from its menu, `--minimized` starts straight in the tray |
 | **Secrets at rest** | Private keys, preshared keys and OpenVPN logins are encrypted with Windows DPAPI; the files only open for your Windows account on this PC |
 | **Import / export** | WireGuard `.conf`, OpenVPN `.ovpn` and Deterium `.toml`, by file, paste or drag and drop. Imported configs that could run programs, write files or open a control port are refused |
-| **Honest status** | Real byte counters and uptime; no fake speeds or placeholder IPs |
+| **Honest status** | Live download/upload speed, latency and totals read from the tunnel adapter (the same for WireGuard and OpenVPN), a two-minute traffic graph, and Traffic / Connection / Protection / Log tabs. Latency is a real ping to an address inside the tunnel; the exit IP is only looked up when you press the button. No fake speeds or placeholder IPs |
 
 ## Install
 
@@ -109,13 +109,16 @@ The release binary is the whole app; rename it to `Deterium.exe` if you like (th
 - Built-in OpenVPN against a real public server: traffic exits from the server's IP, and routes, adapters and internet are back as before afterwards.
 - Tray icon, including connecting from the tray while the window is hidden.
 - DPAPI encryption of keys and logins, and the whole add / import / edit / export / delete flow in the GUI.
+- OpenVPN kill switch from before OpenVPN starts: with the real OpenVPN 2.6.17, other traffic is refused by the firewall while it is connecting, and a connection that never comes up gives the network back.
+- Armed kill switch after a restart: a second service process that finds the first one's note holds the network (the VPN server stays reachable) until the protection is turned off; checked against the real Windows Filtering Platform.
 
 **Not yet**
 - Auto-connect at Windows start
 - Installer (MSI/NSIS) and code signing
 - Linux and macOS (the platform layer is the seam; Windows is the product for now)
 - IPv6 connectivity has not been tested live
-- The kill switch is not enforced before the service has started at boot
+- The kill switch cannot act in the few seconds between Windows starting and the service starting, or while Windows restarts a crashed service (about 5 s). From the moment the service is up again it holds the network before it answers anything
+- WireGuard connections put their kill switch in place when the tunnel is built, not before (OpenVPN's is up before it starts)
 
 The known limits are listed honestly in [SECURITY.md](SECURITY.md).
 

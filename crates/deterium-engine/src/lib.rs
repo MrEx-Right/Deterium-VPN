@@ -12,12 +12,13 @@ mod remote;
 
 pub use deterium_ipc::{service_state, ServiceState};
 pub use deterium_net::{
-    current_user_sid, is_elevated, recover_leftovers, relaunch_elevated, run_elevated_and_wait,
-    ElevateError,
+    adapter_counters, current_user_sid, is_elevated, ping, recover_leftovers, relaunch_elevated,
+    run_elevated_and_wait, AdapterCounters, ElevateError, Protocol as ServerProtocol, Server,
+    OPENVPN_ADAPTER_NAME,
 };
 pub use deterium_proto_openvpn::{bundled_available, bundled_version, find_openvpn};
 pub use deterium_proto_wireguard::TunnelStats;
-pub use remote::RemoteTunnel;
+pub use remote::{service_armed, service_disarm, RemoteTunnel};
 
 pub enum Tunnel {
     WireGuard(WireGuardTunnelHandle),
@@ -51,6 +52,23 @@ pub fn attach_checked() -> Result<Option<(deterium_core::Uuid, Tunnel)>, String>
         Ok(Some(remote)) => Ok(Some((remote.profile_id(), Tunnel::Remote(remote)))),
         Ok(None) => Ok(None),
         Err(err) => Err(err.to_string()),
+    }
+}
+
+/// The servers the profile's tunnel has to reach from outside the tunnel
+/// (names resolved now). A firewall hold that must still let the VPN connect
+/// permits exactly these. Empty when they can't be worked out.
+pub fn guard_servers(profile: &ServerProfile) -> Vec<Server> {
+    match profile.protocol {
+        Protocol::Wireguard => WireGuardAdapter
+            .load_profile(profile)
+            .map(|config| vec![Server::udp(config.endpoint())])
+            .unwrap_or_default(),
+        Protocol::Openvpn => profile
+            .openvpn
+            .as_ref()
+            .map(|ovpn| deterium_proto_openvpn::configured_servers(&ovpn.raw_config))
+            .unwrap_or_default(),
     }
 }
 
