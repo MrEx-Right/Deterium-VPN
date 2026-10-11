@@ -400,7 +400,7 @@ fn sparkline(ui: &mut egui::Ui, values: &VecDeque<f64>, color: Color32) {
     if values.len() >= 2 && ui.is_rect_visible(rect) {
         let points = polyline(rect, values, scale_of(&[values]));
         ui.painter()
-            .add(Shape::line(points, Stroke::new(1.5, color)));
+            .add(Shape::line(points, Stroke::new(1.5_f32, color)));
     }
 }
 
@@ -415,7 +415,7 @@ fn traffic_chart(ui: &mut egui::Ui, telemetry: Option<&Telemetry>) {
         let y = rect.bottom() - fraction * rect.height();
         painter.line_segment(
             [pos2(rect.left(), y), pos2(rect.right(), y)],
-            Stroke::new(1.0, with_alpha(DIM, 40)),
+            Stroke::new(1.0_f32, with_alpha(DIM, 40)),
         );
     }
     let Some(t) = telemetry.filter(|t| t.down.len() >= 2) else {
@@ -431,11 +431,11 @@ fn traffic_chart(ui: &mut egui::Ui, telemetry: Option<&Telemetry>) {
     let scale = scale_of(&[&t.down, &t.up]);
     painter.add(Shape::line(
         polyline(rect, &t.down, scale),
-        Stroke::new(1.8, DOWN),
+        Stroke::new(1.8_f32, DOWN),
     ));
     painter.add(Shape::line(
         polyline(rect, &t.up, scale),
-        Stroke::new(1.8, UP),
+        Stroke::new(1.8_f32, UP),
     ));
     let (top, unit) = format_rate(scale);
     painter.text(
