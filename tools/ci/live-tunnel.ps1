@@ -66,6 +66,27 @@ function Stop-Hold($Proc, [string]$Dir, [int]$TimeoutSec = 60) {
     return (Get-Content (Join-Path $Dir "disconnected") -Raw)
 }
 
+# Takes network snapshots until one is identical to $Before. Windows removes
+# the adapter and its routes a moment after the process has let go of them, so
+# one snapshot taken the instant after "disconnected" can still show them; a
+# real leftover is still there after $TimeoutSec seconds and fails. Returns
+# $null when the network matched, otherwise the description of the difference.
+function Wait-NetworkRestored([string]$Before, [string]$AfterFile, [int]$TimeoutSec = 20) {
+    $started = Get-Date
+    $deadline = $started.AddSeconds($TimeoutSec)
+    while ($true) {
+        & ./tools/ci/net-snapshot.ps1 -Out $AfterFile *> $null
+        $report = & ./tools/ci/net-snapshot.ps1 -Before $Before -After $AfterFile *>&1 | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            $waited = [int]((Get-Date) - $started).TotalSeconds
+            Write-Host "network identical to the snapshot (after $waited s)"
+            return $null
+        }
+        if ((Get-Date) -gt $deadline) { return $report.Trim() }
+        Start-Sleep -Seconds 1
+    }
+}
+
 # Simulates a crash: the process dies without disconnecting.
 function Kill-Hold($Proc) {
     if (-not $Proc.HasExited) { $Proc.Kill(); $Proc.WaitForExit(15000) | Out-Null }

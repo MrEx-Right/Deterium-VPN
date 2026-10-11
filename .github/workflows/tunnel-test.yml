@@ -87,9 +87,11 @@ jobs:
               try { Stop-Hold $proc $dir 60 | Out-Null } catch { $problems += "round ${round}: $_"; Kill-Hold $proc }
             }
             $after = Join-Path $env:RUNNER_TEMP "net-after-$round.txt"
-            ./tools/ci/net-snapshot.ps1 -Out $after | Out-Null
-            ./tools/ci/net-snapshot.ps1 -Before $before -After $after
-            if ($LASTEXITCODE -ne 0) { $problems += "round ${round}: the network is not as it was before" }
+            $difference = Wait-NetworkRestored $before $after 20
+            if ($difference) {
+              Write-Host $difference
+              $problems += "round ${round}: the network is not as it was before:`n$difference"
+            }
             Write-Host "::endgroup::"
           }
 
@@ -121,9 +123,8 @@ jobs:
           Start-Sleep -Seconds 2
 
           $after = Join-Path $env:RUNNER_TEMP "net-after-crash.txt"
-          ./tools/ci/net-snapshot.ps1 -Out $after | Out-Null
-          ./tools/ci/net-snapshot.ps1 -Before $before -After $after
-          if ($LASTEXITCODE -ne 0) { throw "recovery did not put the network back" }
+          $difference = Wait-NetworkRestored $before $after 20
+          if ($difference) { throw "recovery did not put the network back:`n$difference" }
 
           $trace = Get-Trace "https://1.1.1.1/cdn-cgi/trace"
           if ($trace['warp'] -ne 'off') { throw "traffic still goes through a tunnel after recovery (warp=$($trace['warp']))" }
