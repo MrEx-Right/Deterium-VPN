@@ -55,9 +55,16 @@ These are documented and on the roadmap:
   that time so OpenVPN can look it up (the server's name can leak that way, and
   nothing else of yours). A connection that fails before it ever came up (wrong
   password, dead server) lifts the block again; a tunnel that was up keeps it.
-- The WireGuard kill switch is put in place when the tunnel is built, not
-  before, so the first moments of a WireGuard connection are as exposed as
-  without a VPN.
+- The WireGuard kill switch is in force before the tunnel is built, like
+  OpenVPN's: only the VPN server (and DHCP, and the local network if allowed)
+  can be reached while the adapter and routes are being set up. The server's
+  address is looked up once, before that block goes in. A connection that fails
+  while it is being built lifts the block again.
+- "Start with Windows" is one value under the current user's `Run` key. Until
+  the user signs in, the service's kill switch keeps holding the network, so
+  after a restart there is no internet until the app has connected (a few
+  seconds after sign-in) or the user turns the protection off. If it can't
+  connect after a few tries it stops and says so.
 - The built-in OpenVPN is run as a separate program from an administrator-only folder; its own vulnerabilities are fixed by updating Deterium (see THIRD-PARTY.md for the bundled version).
 - Secrets are protected against other Windows accounts and against copying the
   files to another PC, **not** against malware already running as the same user.

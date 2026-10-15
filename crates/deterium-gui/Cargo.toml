@@ -22,7 +22,7 @@ rfd = "0.14"
 deterium-service.workspace = true
 tray-icon = { version = "0.19", default-features = false }
 raw-window-handle = "0.6"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 png = "0.18"

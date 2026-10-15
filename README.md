@@ -111,14 +111,14 @@ The release binary is the whole app; rename it to `Deterium.exe` if you like (th
 - DPAPI encryption of keys and logins, and the whole add / import / edit / export / delete flow in the GUI.
 - OpenVPN kill switch from before OpenVPN starts: with the real OpenVPN 2.6.17, other traffic is refused by the firewall while it is connecting, and a connection that never comes up gives the network back.
 - Armed kill switch after a restart: a second service process that finds the first one's note holds the network (the VPN server stays reachable) until the protection is turned off; checked against the real Windows Filtering Platform.
+- WireGuard kill switch from before the tunnel is built: while the adapter and routes are created, the firewall refused other traffic from the first moment (123 of 124 probes during the 1.1 s build), and disconnecting gave the network back exactly as it was.
 
 **Not yet**
-- Auto-connect at Windows start
+- "Start with Windows" (connects to one server when you sign in) is built and unit-tested, but has not been run through a real sign-in yet
 - Installer (MSI/NSIS) and code signing
 - Linux and macOS (the platform layer is the seam; Windows is the product for now)
 - IPv6 connectivity has not been tested live
 - The kill switch cannot act in the few seconds between Windows starting and the service starting, or while Windows restarts a crashed service (about 5 s). From the moment the service is up again it holds the network before it answers anything
-- WireGuard connections put their kill switch in place when the tunnel is built, not before (OpenVPN's is up before it starts)
 
 The known limits are listed honestly in [SECURITY.md](SECURITY.md).
 

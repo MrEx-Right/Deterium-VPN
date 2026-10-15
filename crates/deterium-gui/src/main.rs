@@ -13,6 +13,7 @@
 // A release build is a window app: no console box behind it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod draft;
 mod editor;
 mod hero;
@@ -38,6 +39,70 @@ const SLOW_CONNECT: Duration = Duration::from_secs(8);
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// How often the service is asked whether it is holding the network.
 const HELD_CHECK_EVERY: Duration = Duration::from_millis(1500);
+/// Connecting at sign-in: right after Windows starts the network or the
+/// service may not be up yet, so the app tries a few times before giving up.
+const AUTOSTART_TRIES: u32 = 8;
+const AUTOSTART_EVERY: Duration = Duration::from_secs(10);
+
+/// A connection the app makes by itself when Windows starts it (see
+/// [`autostart`]).
+struct AutostartJob {
+    id: Uuid,
+    attempts: u32,
+    next_try: Instant,
+    /// The app has asked for the connection at least once. After that, being
+    /// idle means the user disconnected, and the job ends.
+    started: bool,
+}
+
+/// What the app's connection looks like from the point of view of an
+/// [`AutostartJob`] for one server.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Seen {
+    /// Up: the job is done.
+    Connected,
+    /// Being set up: wait.
+    ComingUp,
+    /// The server's tunnel gave up.
+    Errored,
+    /// Another server is connected: the user's choice now.
+    Other,
+    /// The request itself failed (network not ready yet, service not reachable).
+    Failed,
+    /// Nothing is happening.
+    Idle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AutostartStep {
+    Wait,
+    Finish,
+    GiveUp,
+    /// Connect now, first dropping the failed tunnel if there is one.
+    Attempt {
+        drop_current: bool,
+    },
+}
+
+/// What to do next. Pure, so the retry rules are tested without a window.
+fn autostart_step(job: &AutostartJob, seen: Seen, now: Instant) -> AutostartStep {
+    match seen {
+        Seen::Connected | Seen::Other => return AutostartStep::Finish,
+        Seen::ComingUp => return AutostartStep::Wait,
+        // Idle after the app asked: the user disconnected.
+        Seen::Idle if job.started => return AutostartStep::Finish,
+        Seen::Idle | Seen::Failed | Seen::Errored => {}
+    }
+    if now < job.next_try {
+        return AutostartStep::Wait;
+    }
+    if job.attempts >= AUTOSTART_TRIES {
+        return AutostartStep::GiveUp;
+    }
+    AutostartStep::Attempt {
+        drop_current: seen == Seen::Errored,
+    }
+}
 
 enum Connection {
     Idle,
@@ -111,6 +176,11 @@ struct DeteriumApp {
     /// Live speed, latency and totals of the current tunnel.
     telemetry: Option<insights::Telemetry>,
     insight_tab: insights::Tab,
+    /// The server Windows is set to connect to at sign-in (read from the
+    /// registry, which is the only place that says so).
+    autostart_server: Option<Uuid>,
+    /// Set when Windows started this instance to connect at sign-in.
+    autostart_job: Option<AutostartJob>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -174,6 +244,10 @@ impl Default for DeteriumApp {
         // closed and reopened): show it instead of pretending nothing is up.
         let adopted = deterium_engine::attach()
             .filter(|(id, _)| loaded.profiles.iter().any(|p| p.profile.id == *id));
+        // Windows started this instance to connect at sign-in; not when a
+        // tunnel is already up (the window was only reopened).
+        let autostart_id = autostart::server_in(&args)
+            .filter(|id| adopted.is_none() && loaded.profiles.iter().any(|p| p.profile.id == *id));
         let (connection, selected) = match adopted {
             Some((id, tunnel)) => {
                 // The service remembers when the tunnel came up, so the uptime
@@ -195,7 +269,7 @@ impl Default for DeteriumApp {
                     Some(id),
                 )
             }
-            None => (Connection::Idle, auto_connect.or(selected)),
+            None => (Connection::Idle, auto_connect.or(autostart_id).or(selected)),
         };
 
         Self {
@@ -227,6 +301,13 @@ impl Default for DeteriumApp {
             held_release: None,
             telemetry: None,
             insight_tab: insights::Tab::default(),
+            autostart_server: autostart::enabled_for(),
+            autostart_job: autostart_id.map(|id| AutostartJob {
+                id,
+                attempts: 0,
+                next_try: Instant::now(),
+                started: false,
+            }),
         }
     }
 }
@@ -244,6 +325,7 @@ impl eframe::App for DeteriumApp {
         self.poll_connection(ctx);
         self.poll_service(ctx);
         self.poll_held(ctx);
+        self.run_autostart(ctx);
 
         paint_background(ctx, self.background_target());
 
@@ -413,6 +495,11 @@ impl DeteriumApp {
         };
         match self.store.delete(&stored) {
             Ok(()) => {
+                // Windows must not keep trying to connect to a server that is gone.
+                if self.autostart_server == Some(id) {
+                    let _ = autostart::disable();
+                    self.autostart_server = autostart::enabled_for();
+                }
                 self.toast = Some(toast(format!("Deleted \"{}\"", stored.profile.name), GOOD));
                 self.reload();
             }
@@ -763,6 +850,14 @@ impl DeteriumApp {
         }
 
         ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+            // Bottom-most line: the version of this build.
+            ui.label(
+                RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                    .size(11.5)
+                    .color(DIM),
+            )
+            .on_hover_text(concat!("Deterium VPN ", env!("CARGO_PKG_VERSION")));
+            ui.add_space(2.0);
             let (text, color) = match self.service_state {
                 ServiceState::Running => ("Background service: running", GOOD),
                 ServiceState::Stopped => ("Background service: stopped", WARN),
@@ -891,6 +986,29 @@ impl DeteriumApp {
             }
             if ui.add(ghost_button("Duplicate", DIM)).clicked() {
                 self.duplicate(id);
+            }
+            let on_here = self.autostart_server == Some(id);
+            let service_up = self.service_state == ServiceState::Running;
+            let start_button = ui
+                .add_enabled(
+                    service_up || on_here,
+                    ghost_button(
+                        if on_here {
+                            "Start with Windows: on"
+                        } else {
+                            "Start with Windows: off"
+                        },
+                        if on_here { GOOD } else { DIM },
+                    ),
+                )
+                .on_hover_text(match (on_here, self.autostart_server) {
+                    (true, _) => "Deterium starts hidden when you sign in and connects to this server. Click to stop.",
+                    (false, Some(_)) => "Another server connects at sign-in. Click to connect to this one instead.",
+                    (false, None) => "Starts Deterium hidden when you sign in to Windows and connects to this server. Until then the kill switch keeps holding your internet.",
+                })
+                .on_disabled_hover_text("Needs the background service. Install it from the sidebar first.");
+            if start_button.clicked() {
+                self.toggle_autostart(id);
             }
             if ui.add(ghost_button("Export…", DIM)).clicked() {
                 self.export(id);
@@ -1099,6 +1217,91 @@ impl DeteriumApp {
             },
         };
         tray.show(summary);
+    }
+
+    /// Connects by itself when Windows started this app for that (see
+    /// [`autostart`]). It stops as soon as the connection is up, or the user
+    /// takes over by connecting elsewhere or disconnecting, and gives up after
+    /// a few tries so a server that is down never makes it loop forever.
+    fn run_autostart(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.autostart_job.as_ref() else {
+            return;
+        };
+        let id = job.id;
+        // Keeps ticking while the window is parked in the tray.
+        ctx.request_repaint_after(Duration::from_secs(1));
+
+        let seen = match &self.connection {
+            Connection::Active {
+                profile, status, ..
+            } if *profile == id => match status {
+                TunnelStatus::Connected => Seen::Connected,
+                TunnelStatus::Error => Seen::Errored,
+                _ => Seen::ComingUp,
+            },
+            Connection::Active { .. } => Seen::Other,
+            Connection::Failed { .. } => Seen::Failed,
+            Connection::Idle => Seen::Idle,
+        };
+        match autostart_step(job, seen, Instant::now()) {
+            AutostartStep::Wait => {}
+            AutostartStep::Finish => self.autostart_job = None,
+            AutostartStep::GiveUp => {
+                self.autostart_job = None;
+                self.toast = Some(toast(
+                    "Couldn't connect automatically. Connect from the app when you're ready",
+                    WARN,
+                ));
+            }
+            AutostartStep::Attempt { drop_current } => {
+                if let Some(job) = self.autostart_job.as_mut() {
+                    job.attempts += 1;
+                    job.next_try = Instant::now() + AUTOSTART_EVERY;
+                }
+                // Without the service a connection needs a permission prompt,
+                // which nobody wants at sign-in: wait for the service instead.
+                if self.service_state != ServiceState::Running {
+                    return;
+                }
+                if drop_current {
+                    self.disconnect();
+                }
+                if self.profile(id).is_none() {
+                    self.autostart_job = None;
+                    return;
+                }
+                self.selected = Some(id);
+                self.start_connect(id, ConnectMode::Full);
+                if let Some(job) = self.autostart_job.as_mut() {
+                    job.started = true;
+                }
+            }
+        }
+    }
+
+    /// Turns "connect when Windows starts" on for `id`, or off if it already
+    /// is for that server.
+    fn toggle_autostart(&mut self, id: Uuid) {
+        let turning_off = self.autostart_server == Some(id);
+        let result = if turning_off {
+            autostart::disable()
+        } else {
+            autostart::enable(id)
+        };
+        self.autostart_server = autostart::enabled_for();
+        self.toast = Some(match result {
+            Ok(()) if turning_off => toast("Deterium will no longer start with Windows", GOOD),
+            Ok(()) => {
+                let name = self
+                    .profile(id)
+                    .map_or_else(String::new, |p| p.profile.name.clone());
+                toast(
+                    format!("Deterium will connect to \"{name}\" when you sign in to Windows"),
+                    GOOD,
+                )
+            }
+            Err(why) => toast(format!("Couldn't change this: {why}"), BAD),
+        });
     }
 
     /// Keeps `held` up to date: asks the service, off the UI thread, whether
@@ -1576,4 +1779,89 @@ fn main() -> eframe::Result<()> {
             }))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(attempts: u32, started: bool, due_in: Option<Duration>) -> AutostartJob {
+        AutostartJob {
+            id: Uuid::new_v4(),
+            attempts,
+            next_try: Instant::now() + due_in.unwrap_or_default(),
+            started,
+        }
+    }
+
+    fn step(job: &AutostartJob, seen: Seen) -> AutostartStep {
+        // A moment after `next_try` for a due job, well before it for a waiting one.
+        autostart_step(job, seen, Instant::now() + Duration::from_millis(1))
+    }
+
+    #[test]
+    fn the_first_try_happens_right_away_and_needs_no_drop() {
+        assert_eq!(
+            step(&job(0, false, None), Seen::Idle),
+            AutostartStep::Attempt {
+                drop_current: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_connection_that_is_up_or_coming_up_ends_or_pauses_the_job() {
+        assert_eq!(
+            step(&job(1, true, None), Seen::Connected),
+            AutostartStep::Finish
+        );
+        assert_eq!(
+            step(&job(1, true, None), Seen::ComingUp),
+            AutostartStep::Wait
+        );
+    }
+
+    #[test]
+    fn the_user_taking_over_ends_the_job() {
+        // Another server was connected.
+        assert_eq!(
+            step(&job(0, false, None), Seen::Other),
+            AutostartStep::Finish
+        );
+        // Disconnected after the app had already asked.
+        assert_eq!(step(&job(1, true, None), Seen::Idle), AutostartStep::Finish);
+    }
+
+    #[test]
+    fn a_failed_or_errored_attempt_is_retried_only_when_it_is_time() {
+        let waiting = job(1, true, Some(Duration::from_secs(10)));
+        assert_eq!(step(&waiting, Seen::Failed), AutostartStep::Wait);
+        assert_eq!(step(&waiting, Seen::Errored), AutostartStep::Wait);
+
+        let due = job(1, true, None);
+        assert_eq!(
+            step(&due, Seen::Failed),
+            AutostartStep::Attempt {
+                drop_current: false
+            }
+        );
+        assert_eq!(
+            step(&due, Seen::Errored),
+            AutostartStep::Attempt { drop_current: true }
+        );
+    }
+
+    #[test]
+    fn it_gives_up_after_a_few_tries_instead_of_looping_for_ever() {
+        let spent = job(AUTOSTART_TRIES, true, None);
+        assert_eq!(step(&spent, Seen::Failed), AutostartStep::GiveUp);
+        assert_eq!(step(&spent, Seen::Errored), AutostartStep::GiveUp);
+        // One try left is still a try.
+        assert_eq!(
+            step(&job(AUTOSTART_TRIES - 1, true, None), Seen::Failed),
+            AutostartStep::Attempt {
+                drop_current: false
+            }
+        );
+    }
 }
