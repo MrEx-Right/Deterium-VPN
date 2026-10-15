@@ -38,6 +38,8 @@ Get-Process -Name "Deterium" -ErrorAction SilentlyContinue |
 $shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Deterium VPN.lnk"
 if (Test-Path $shortcut) { Remove-Item $shortcut -Force }
 Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeteriumVPN" -Recurse -Force -ErrorAction SilentlyContinue
+# "Start with Windows" (set in the app): Windows must not keep starting a program that is gone.
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Deterium" -ErrorAction SilentlyContinue
 
 if ($RemoveData) {
     $data = Join-Path $env:APPDATA "Deterium"

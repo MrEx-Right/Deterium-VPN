@@ -2,7 +2,7 @@
 //! adapter, and a `Platform` that ties them together. Public (not
 //! `cfg(test)`) so other crates' tests can run the whole data plane too.
 
-use crate::leak::{build_rules, LeakPolicy};
+use crate::leak::{build_hold_rules, build_rules, LeakPolicy, Server};
 use crate::plan::{NetworkPlan, Op, PhysicalRoute};
 use crate::platform::Platform;
 use crate::system::{NetError, NetworkGuard, SystemNet, TunInfo, Undo};
@@ -75,6 +75,8 @@ pub struct FakePlatform {
     pub physical: Option<PhysicalRoute>,
     /// Make `guard_leaks` fail, to test that a connection then fails whole.
     pub fail_leak_guard: bool,
+    /// Make `guard_hold` fail, to test that a connection then never starts.
+    pub fail_hold: bool,
     peer: Mutex<Option<FakeTunPeer>>,
 }
 
@@ -88,6 +90,7 @@ impl FakePlatform {
                 next_hop: Some("192.168.1.1".parse().unwrap()),
             }),
             fail_leak_guard: false,
+            fail_hold: false,
             peer: Mutex::new(None),
         }
     }
@@ -139,6 +142,30 @@ impl Platform for FakePlatform {
             .unwrap()
             .push(format!("leak_guard on ({} rules)", rules.len()));
         Ok(Box::new(FakeLeakGuard(self.log.clone())))
+    }
+
+    fn guard_hold(&self, servers: Vec<Server>, allow_lan: bool) -> Result<Box<dyn Send>, NetError> {
+        if self.fail_hold {
+            return Err(NetError::Os {
+                op: "guard_hold",
+                message: "injected failure".into(),
+            });
+        }
+        let rules = build_hold_rules(servers, allow_lan, 0, false);
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("hold on ({} rules)", rules.len()));
+        Ok(Box::new(FakeHold(self.log.clone())))
+    }
+}
+
+/// Records when the temporary block is lifted.
+struct FakeHold(Log);
+
+impl Drop for FakeHold {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().push("hold off".into());
     }
 }
 

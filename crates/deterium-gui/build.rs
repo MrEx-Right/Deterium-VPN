@@ -12,7 +12,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.2.0".into());
+    let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.3.0".into());
 
     let mut resources = winresource::WindowsResource::new();
     resources

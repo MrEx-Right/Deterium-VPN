@@ -476,6 +476,29 @@ mod tests {
     }
 
     #[test]
+    fn a_kill_switch_blocks_the_network_before_the_tunnel_is_built() {
+        let platform = FakePlatform::new(true);
+        let handle = connect_with(config_with(true, "0.0.0.0/0", "10.6.0.1"), &platform).unwrap();
+
+        let entries = platform.entries();
+        let position = |prefix: &str| entries.iter().position(|e| e.starts_with(prefix)).unwrap();
+        assert!(
+            position("hold on") < position("open_tun"),
+            "nothing may leave the PC while the tunnel is being built: {entries:?}"
+        );
+        assert!(position("hold off") > position("leak_guard on"));
+        WireGuardAdapter.disconnect(handle).unwrap();
+    }
+
+    #[test]
+    fn without_a_kill_switch_the_network_is_not_held() {
+        let platform = FakePlatform::new(true);
+        let handle = connect_with(config_with(false, "0.0.0.0/0", "10.6.0.1"), &platform).unwrap();
+        assert!(!platform.entries().iter().any(|e| e.starts_with("hold")));
+        WireGuardAdapter.disconnect(handle).unwrap();
+    }
+
+    #[test]
     fn dns_leak_blocking_is_only_asked_for_when_the_tunnel_carries_the_dns() {
         // Full tunnel: DNS goes through it, so blocking DNS elsewhere is right.
         let full = leak_policy(&config_with(false, "0.0.0.0/0", "10.6.0.1")).unwrap();

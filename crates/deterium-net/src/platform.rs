@@ -4,7 +4,7 @@
 //! tests without admin rights or a driver.
 
 use crate::cidr::Cidr;
-use crate::leak::LeakPolicy;
+use crate::leak::{LeakPolicy, Server};
 use crate::plan::{build_plan, NetworkPlan, PhysicalRoute, PlanInput};
 use crate::system::{NetError, TunInfo};
 use crate::tun::TunDevice;
@@ -26,6 +26,11 @@ pub trait Platform: Send + Sync {
     /// Installs the leak-protection firewall rules. Dropping the returned
     /// guard removes them. They must never outlive the process.
     fn guard_leaks(&self, tun: &TunInfo, policy: &LeakPolicy) -> Result<Box<dyn Send>, NetError>;
+
+    /// Blocks everything except the VPN servers (and the local network if
+    /// asked) while there is no tunnel yet. Dropping the guard lifts the block.
+    /// Same lifetime rule as [`Platform::guard_leaks`].
+    fn guard_hold(&self, servers: Vec<Server>, allow_lan: bool) -> Result<Box<dyn Send>, NetError>;
 }
 
 /// What a connection needs from the network.
@@ -65,6 +70,19 @@ pub fn bring_up(
         return Err(NetError::NotElevated);
     }
 
+    // With a kill switch the network is blocked (except the VPN server) before
+    // the adapter exists, so not even the seconds it takes to set the tunnel up
+    // are exposed. Fails closed. The block is lifted once the full rules are in
+    // force, and on any error below, so a failed attempt never leaves the PC
+    // offline. DNS-leak blocking alone doesn't hold: it must not cut off name
+    // lookups while connecting.
+    let hold = match &spec.leak {
+        Some(policy) if policy.kill_switch => {
+            Some(platform.guard_hold(policy.servers.clone(), policy.allow_lan)?)
+        }
+        _ => None,
+    };
+
     // Looked up first: once routes change, the answer may too.
     let endpoint_route = platform.route_to(spec.endpoint).ok();
     let tun = platform.open_tun(adapter_name)?;
@@ -87,6 +105,8 @@ pub fn bring_up(
         Some(policy) if policy.is_active() => Some(platform.guard_leaks(tun.info(), policy)?),
         _ => None,
     };
+    // New rules first, the hold after: there is never a moment without any.
+    drop(hold);
     Ok(RoutedNetwork {
         _guard: guard,
         tun,
@@ -124,6 +144,9 @@ impl Platform for UnsupportedPlatform {
         Err(NetError::Unsupported)
     }
     fn guard_leaks(&self, _: &TunInfo, _: &LeakPolicy) -> Result<Box<dyn Send>, NetError> {
+        Err(NetError::Unsupported)
+    }
+    fn guard_hold(&self, _: Vec<Server>, _: bool) -> Result<Box<dyn Send>, NetError> {
         Err(NetError::Unsupported)
     }
 }
@@ -242,6 +265,85 @@ mod tests {
             entries.iter().filter(|e| e.starts_with("undo")).count() >= 3,
             "the routes that were already applied are reverted: {entries:?}"
         );
+    }
+
+    fn at(entries: &[String], starts_with: &str) -> usize {
+        entries
+            .iter()
+            .position(|e| e.starts_with(starts_with))
+            .unwrap_or_else(|| panic!("no `{starts_with}` in {entries:?}"))
+    }
+
+    #[test]
+    fn the_hold_goes_in_before_the_adapter_exists_and_is_lifted_after_the_full_rules() {
+        let platform = FakePlatform::new(true);
+        let network = bring_up(&platform, "Deterium", &kill_switch_spec()).unwrap();
+
+        let entries = platform.entries();
+        let hold_on = at(&entries, "hold on");
+        assert!(
+            hold_on < at(&entries, "open_tun"),
+            "blocked before the adapter is created: {entries:?}"
+        );
+        assert!(
+            hold_on < at(&entries, "apply"),
+            "blocked before the first route is applied: {entries:?}"
+        );
+        assert!(
+            at(&entries, "hold off") > at(&entries, "leak_guard on"),
+            "the full rules are in force before the hold is lifted: {entries:?}"
+        );
+        drop(network);
+    }
+
+    #[test]
+    fn a_failed_attempt_lifts_the_hold_so_the_pc_is_not_left_offline() {
+        let mut platform = FakePlatform::new(true);
+        platform.physical = None; // a routing loop: the plan is refused
+        let result = bring_up(&platform, "Deterium", &kill_switch_spec());
+        assert!(matches!(result, Err(NetError::Plan(_))));
+
+        let entries = platform.entries();
+        assert!(entries.iter().any(|e| e.starts_with("hold on")));
+        assert!(entries.iter().any(|e| e == "hold off"), "{entries:?}");
+        assert!(!entries.iter().any(|e| e.starts_with("leak_guard on")));
+    }
+
+    #[test]
+    fn a_failed_full_rule_install_also_lifts_the_hold() {
+        let mut platform = FakePlatform::new(true);
+        platform.fail_leak_guard = true;
+        assert!(bring_up(&platform, "Deterium", &kill_switch_spec()).is_err());
+        let entries = platform.entries();
+        assert!(entries.iter().any(|e| e == "hold off"), "{entries:?}");
+    }
+
+    #[test]
+    fn a_hold_that_cannot_be_installed_stops_the_connection_before_anything_is_touched() {
+        let mut platform = FakePlatform::new(true);
+        platform.fail_hold = true;
+        assert!(bring_up(&platform, "Deterium", &kill_switch_spec()).is_err());
+        assert!(
+            platform.entries().is_empty(),
+            "never connect without the protection that was asked for: {:?}",
+            platform.entries()
+        );
+    }
+
+    #[test]
+    fn dns_leak_blocking_alone_does_not_hold_the_network() {
+        let platform = FakePlatform::new(true);
+        let mut spec = kill_switch_spec();
+        spec.leak = Some(crate::leak::LeakPolicy {
+            kill_switch: false,
+            allow_lan: true,
+            block_dns_leaks: true,
+            servers: vec![crate::leak::Server::udp(
+                "203.0.113.10:51820".parse().unwrap(),
+            )],
+        });
+        let _network = bring_up(&platform, "Deterium", &spec).unwrap();
+        assert!(!platform.entries().iter().any(|e| e.starts_with("hold")));
     }
 
     #[test]

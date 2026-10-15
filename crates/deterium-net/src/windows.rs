@@ -90,6 +90,15 @@ impl Platform for WindowsPlatform {
         let rules = build_rules(policy, tun.luid);
         Ok(Box::new(crate::wfp::install(&rules)?))
     }
+
+    fn guard_hold(
+        &self,
+        servers: Vec<crate::leak::Server>,
+        allow_lan: bool,
+    ) -> Result<Box<dyn Send>, NetError> {
+        // The server's address is already resolved, so no DNS lookups are needed.
+        guard_blocked(servers, allow_lan, false)
+    }
 }
 
 /// Reverts anything an earlier run left behind (it crashed or was killed
