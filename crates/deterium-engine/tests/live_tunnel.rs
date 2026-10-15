@@ -80,10 +80,22 @@ fn hold_tunnel_open() {
     if !up {
         let log = tunnel.log().join("\n");
         let status = tunnel.status();
+        // What the data plane saw. The byte counters only count traffic carried
+        // through the tunnel, not handshake packets; a last handshake of `None`
+        // means the server never completed one.
+        let seen = tunnel.stats().map_or_else(
+            || "no counters".to_string(),
+            |s| {
+                format!(
+                    "carried {} bytes out and {} bytes in, last handshake {:?}",
+                    s.tx_bytes, s.rx_bytes, s.last_handshake
+                )
+            },
+        );
         let _ = tunnel.disconnect();
         std::fs::write(
             dir.join("failed"),
-            format!("never connected (status {status:?})\n{log}"),
+            format!("never connected (status {status:?}; {seen})\n{log}"),
         )
         .unwrap();
         panic!("the tunnel never connected (status {status:?})");

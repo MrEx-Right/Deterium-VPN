@@ -54,6 +54,10 @@ def main():
 
     started = time.monotonic()
     client = None
+    # What went through, so a tunnel that never came up can be told apart:
+    # nothing from the client (a problem on this PC), or nothing back from the
+    # server (the server did not answer).
+    counts = {"out": [0, 0], "in": [0, 0], "ignored": [0, 0]}
     with open(args.log, "w", encoding="ascii") as log:
 
         def record(direction, data):
@@ -82,10 +86,26 @@ def main():
                     client = addr
                     record("out", data)
                     outside.sendto(data, upstream)
+                    counts["out"][0] += 1
+                    counts["out"][1] += len(data)
                 elif client is not None and addr[0] == upstream[0]:
                     record("in", data)
                     inside.sendto(data, client)
-    print("relay: stopped", flush=True)
+                    counts["in"][0] += 1
+                    counts["in"][1] += len(data)
+                else:
+                    # An answer from an address other than the one we forward to.
+                    counts["ignored"][0] += 1
+                    counts["ignored"][1] += len(data)
+                    if counts["ignored"][0] <= 3:
+                        print(f"relay: ignored {len(data)} bytes from {addr[0]}:{addr[1]}", flush=True)
+    print(
+        "relay: stopped. "
+        f"from Deterium to the server: {counts['out'][0]} datagrams ({counts['out'][1]} bytes); "
+        f"from the server back: {counts['in'][0]} datagrams ({counts['in'][1]} bytes); "
+        f"ignored from other addresses: {counts['ignored'][0]}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
