@@ -178,14 +178,19 @@ pub fn server_row(
         let fill = if selected {
             with_alpha(ACCENT, 40)
         } else if response.hovered() {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 10)
+            unmultiplied(255, 255, 255, 10)
         } else {
             Color32::TRANSPARENT
         };
         let painter = ui.painter();
         painter.rect_filled(rect, 12.0, fill);
         if selected {
-            painter.rect_stroke(rect, 12.0, Stroke::new(1.0_f32, with_alpha(ACCENT, 120)));
+            painter.rect_stroke(
+                rect,
+                12.0,
+                Stroke::new(1.0_f32, with_alpha(ACCENT, 120)),
+                egui::StrokeKind::Middle,
+            );
         }
 
         painter.circle_filled(pos2(rect.left() + 18.0, rect.center().y), 5.0, dot);
@@ -250,6 +255,7 @@ pub fn add_row(ui: &mut egui::Ui) -> egui::Response {
             rect,
             12.0,
             Stroke::new(1.0_f32, with_alpha(ACCENT, if hovered { 170 } else { 80 })),
+            egui::StrokeKind::Middle,
         );
         painter.text(
             rect.center(),

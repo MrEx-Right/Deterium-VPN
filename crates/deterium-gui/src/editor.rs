@@ -1039,7 +1039,7 @@ pub fn show_wizard(
                 let mut shown = script.clone();
                 egui::ScrollArea::vertical()
                     .max_height(230.0)
-                    .id_source("wizard_script")
+                    .id_salt("wizard_script")
                     .show(ui, |ui| {
                         ui.add(
                             TextEdit::multiline(&mut shown)

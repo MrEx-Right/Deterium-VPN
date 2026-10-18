@@ -405,7 +405,7 @@ mod tests {
         factory: Option<SocketFactory>,
         name: &str,
     ) -> Peer {
-        let tunn = Tunn::new(key, peer_pub, None, Some(1), 0, None).unwrap();
+        let tunn = Tunn::new(key, peer_pub, None, Some(1), 0, None);
         let (tun, os) = FakeTun::pair(name);
         let shared = Shared::new(tunn, socket, factory, true, FAST, allowed_ips, Some(tun));
         let workers = spawn(&shared);
@@ -537,7 +537,7 @@ mod tests {
         connected_pair(&sa, &sb);
 
         let client = Shared::new(
-            Tunn::new(a, b_pub, None, Some(1), 0, None).unwrap(),
+            Tunn::new(a, b_pub, None, Some(1), 0, None),
             sa,
             None,
             true,
@@ -546,7 +546,7 @@ mod tests {
             None,
         );
         let server = Shared::new(
-            Tunn::new(b, a_pub, None, Some(1), 0, None).unwrap(),
+            Tunn::new(b, a_pub, None, Some(1), 0, None),
             sb,
             None,
             true,
