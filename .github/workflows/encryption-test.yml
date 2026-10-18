@@ -41,7 +41,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  RELAY: "127.0.0.1:51888"
 
 jobs:
   encryption:
@@ -63,6 +62,17 @@ jobs:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Windows reserves random UDP port ranges at boot (Hyper-V/WinNAT), so a
+      # fixed port can fail with WinError 10013. Let Windows hand out a free one.
+      - name: Pick a free local port for the relay
+        shell: pwsh
+        run: |
+          $probe = [System.Net.Sockets.UdpClient]::new([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Loopback, 0))
+          $port = $probe.Client.LocalEndPoint.Port
+          $probe.Close()
+          Write-Host "relay port: $port"
+          "RELAY=127.0.0.1:$port" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Test profile, endpoint pointed at the local relay
         id: warp

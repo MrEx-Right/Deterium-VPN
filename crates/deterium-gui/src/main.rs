@@ -772,8 +772,10 @@ impl DeteriumApp {
                 egui::ColorImage::new(
                     [size as usize, size as usize],
                     logo::render(size, None)
-                        .chunks_exact(4)
-                        .map(|p| theme::unmultiplied(p[0], p[1], p[2], p[3]))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&[r, g, b, a]| theme::unmultiplied(r, g, b, a))
                         .collect(),
                 ),
                 egui::TextureOptions::LINEAR,
