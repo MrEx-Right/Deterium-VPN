@@ -67,12 +67,6 @@ These are documented and on the roadmap:
   that out, so someone watching your connection can see roughly how big each
   packet is. The contents stay encrypted (the encryption test checks that every
   byte leaving the PC is ciphertext), but sizes are not hidden.
-- The WireGuard library (boringtun 0.6) depends on older cryptography crates
-  (`ring` 0.16 and a pre-release `curve25519-dalek`) that have published
-  advisories or are no longer maintained. Moving to boringtun 0.7 needs a small
-  code change and a fresh run of the encryption test, so it is planned rather
-  than done. Dependabot security updates stay on, so a real vulnerability in any
-  dependency still produces a pull request.
 - Installing the service from a folder ordinary users can write to (only
   allowed with `--dev-insecure-location`) lets any program running as that user
   become SYSTEM. Real installs must be under Program Files.

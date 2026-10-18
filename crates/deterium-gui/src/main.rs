@@ -232,7 +232,8 @@ impl Default for DeteriumApp {
 }
 
 impl eframe::App for DeteriumApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         self.handle_tray(ctx);
         self.handle_dropped_files(ctx);
         if let Some(id) = self.auto_connect.take() {
@@ -247,17 +248,17 @@ impl eframe::App for DeteriumApp {
 
         paint_background(ctx, self.background_target());
 
-        egui::SidePanel::left("sidebar")
+        egui::Panel::left("sidebar")
             .resizable(false)
-            .exact_width(262.0)
+            .exact_size(262.0)
             .frame(
-                egui::Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(10, 13, 24, 225))
-                    .inner_margin(Margin::symmetric(14.0, 18.0)),
+                egui::Frame::NONE
+                    .fill(theme::unmultiplied(10, 13, 24, 225))
+                    .inner_margin(Margin::symmetric(14, 18)),
             )
-            .show(ctx, |ui| self.show_sidebar(ui));
+            .show(ui, |ui| self.show_sidebar(ui));
 
-        self.show_held_banner(ctx);
+        self.show_held_banner(ui);
 
         let mut screen = std::mem::replace(&mut self.screen, Screen::Connect);
         let mut next: Option<Screen> = None;
@@ -269,10 +270,10 @@ impl eframe::App for DeteriumApp {
         };
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().inner_margin(Margin::symmetric(36.0, 26.0)))
-            .show(ctx, |ui| {
+            .frame(egui::Frame::NONE.inner_margin(Margin::symmetric(36, 26)))
+            .show(ui, |ui| {
                 egui::ScrollArea::vertical()
-                    .id_source(scroll_id)
+                    .id_salt(scroll_id)
                     .auto_shrink([false, false])
                     .show(ui, |ui| match &mut screen {
                         Screen::Connect => next = self.show_connect(ui),
@@ -334,8 +335,9 @@ impl DeteriumApp {
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for file in dropped {
-            if let Some(path) = file.path {
-                self.handle_import(editor::read_config_file(&path));
+            let path = file.path();
+            if !path.as_os_str().is_empty() {
+                self.handle_import(editor::read_config_file(&path.to_path_buf()));
             }
         }
     }
@@ -680,9 +682,12 @@ impl DeteriumApp {
             let size = 128;
             ui.ctx().load_texture(
                 "deterium-logo",
-                egui::ColorImage::from_rgba_unmultiplied(
+                egui::ColorImage::new(
                     [size as usize, size as usize],
-                    &logo::render(size, None),
+                    logo::render(size, None)
+                        .chunks_exact(4)
+                        .map(|p| theme::unmultiplied(p[0], p[1], p[2], p[3]))
+                        .collect(),
                 ),
                 egui::TextureOptions::LINEAR,
             )
@@ -723,7 +728,7 @@ impl DeteriumApp {
         let mut add_clicked = false;
 
         egui::ScrollArea::vertical()
-            .id_source("sidebar_scroll")
+            .id_salt("sidebar_scroll")
             .max_height(ui.available_height() - 52.0)
             .show(ui, |ui| {
                 let mut shown_builtin_heading = false;
@@ -763,6 +768,11 @@ impl DeteriumApp {
         }
 
         ui.with_layout(Layout::bottom_up(Align::LEFT), |ui| {
+            ui.label(
+                RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                    .size(10.5)
+                    .color(DIM),
+            );
             let (text, color) = match self.service_state {
                 ServiceState::Running => ("Background service: running", GOOD),
                 ServiceState::Stopped => ("Background service: stopped", WARN),
@@ -1161,20 +1171,20 @@ impl DeteriumApp {
     /// The notice that explains why there is no internet and how to get it
     /// back. Without it, a kill switch that outlives a reboot would look like
     /// a broken PC.
-    fn show_held_banner(&mut self, ctx: &egui::Context) {
+    fn show_held_banner(&mut self, ui: &mut egui::Ui) {
         let Some(armed_for) = self.held else {
             return;
         };
         let name = self
             .profile(armed_for)
             .map_or_else(|| "your VPN".to_string(), |p| p.profile.name.clone());
-        egui::TopBottomPanel::top("held")
+        egui::Panel::top("held")
             .frame(
-                egui::Frame::none()
-                    .fill(Color32::from_rgba_unmultiplied(70, 28, 28, 235))
-                    .inner_margin(Margin::symmetric(24.0, 12.0)),
+                egui::Frame::NONE
+                    .fill(theme::unmultiplied(70, 28, 28, 235))
+                    .inner_margin(Margin::symmetric(24, 12)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.label(
                     RichText::new("Kill switch is holding your internet")
                         .size(15.0)

@@ -1,7 +1,7 @@
 //! Colors, painting helpers and small reusable widgets shared by every view.
 
 use eframe::egui::{
-    self, vec2, Align2, Color32, FontId, Margin, Pos2, RichText, Sense, Shape, Stroke,
+    self, ecolor, vec2, Align2, Color32, FontId, Margin, Pos2, RichText, Sense, Shape, Stroke,
 };
 
 pub const ACCENT: Color32 = Color32::from_rgb(86, 140, 255);
@@ -15,7 +15,23 @@ pub const BORDER: Color32 = Color32::from_rgb(40, 47, 68);
 pub const BG_BOTTOM: Color32 = Color32::from_rgb(8, 10, 18);
 
 pub fn with_alpha(c: Color32, alpha: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), alpha)
+    unmultiplied(c.r(), c.g(), c.b(), alpha)
+}
+
+/// A translucent color the way egui 0.28 made it: the alpha is applied in
+/// linear light. egui 0.36's `Color32::from_rgba_unmultiplied` applies it to
+/// the gamma values instead, which makes every tint here about half as bright.
+pub fn unmultiplied(r: u8, g: u8, b: u8, a: u8) -> Color32 {
+    match a {
+        0 => Color32::TRANSPARENT,
+        255 => Color32::from_rgb(r, g, b),
+        a => {
+            let a_lin = f32::from(a) / 255.0;
+            let mul =
+                |c| ecolor::gamma_u8_from_linear_f32(ecolor::linear_f32_from_gamma_u8(c) * a_lin);
+            Color32::from_rgba_premultiplied(mul(r), mul(g), mul(b), a)
+        }
+    }
 }
 
 pub fn arc_points(
@@ -79,7 +95,7 @@ fn animate_color(ctx: &egui::Context, id: &str, target: Color32) -> Color32 {
 /// connection state's tint so the whole app "feels" connected.
 pub fn paint_background(ctx: &egui::Context, top_target: Color32) {
     let top = animate_color(ctx, "bg_top", top_target);
-    let rect = ctx.screen_rect();
+    let rect = ctx.viewport_rect();
 
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(rect.left_top(), top);
@@ -94,6 +110,7 @@ pub fn paint_background(ctx: &egui::Context, top_target: Color32) {
 }
 
 pub fn apply_style(ctx: &egui::Context) {
+    ctx.set_theme(egui::Theme::Dark);
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = Color32::TRANSPARENT;
     visuals.window_fill = CARD;
@@ -116,22 +133,22 @@ pub fn apply_style(ctx: &egui::Context) {
     visuals.selection.bg_fill = with_alpha(ACCENT, 90);
     ctx.set_visuals(visuals);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     style.spacing.item_spacing = vec2(8.0, 8.0);
     style.spacing.button_padding = vec2(14.0, 7.0);
-    style.visuals.window_rounding = egui::Rounding::same(14.0);
-    style.visuals.widgets.inactive.rounding = egui::Rounding::same(9.0);
-    style.visuals.widgets.hovered.rounding = egui::Rounding::same(9.0);
-    style.visuals.widgets.active.rounding = egui::Rounding::same(9.0);
-    ctx.set_style(style);
+    style.visuals.window_corner_radius = egui::CornerRadius::same(14);
+    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(9);
+    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(9);
+    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(9);
+    ctx.set_global_style(style);
 }
 
 pub fn card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(with_alpha(CARD, 215))
         .stroke(Stroke::new(1.0_f32, BORDER))
-        .rounding(14.0)
-        .inner_margin(Margin::symmetric(18.0, 16.0))
+        .corner_radius(14.0)
+        .inner_margin(Margin::symmetric(18, 16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add_contents(ui)
@@ -140,10 +157,10 @@ pub fn card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R)
 }
 
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(with_alpha(color, 38))
-        .rounding(7.0)
-        .inner_margin(Margin::symmetric(9.0, 3.0))
+        .corner_radius(7.0)
+        .inner_margin(Margin::symmetric(9, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(text).size(11.5).strong().color(color));
         });
@@ -169,7 +186,7 @@ pub fn primary_button(text: &str) -> egui::Button<'static> {
     .fill(ACCENT)
     .stroke(Stroke::NONE)
     .min_size(vec2(110.0, 34.0))
-    .rounding(9.0)
+    .corner_radius(9.0)
 }
 
 /// Quiet outlined button for secondary actions.
@@ -178,7 +195,7 @@ pub fn ghost_button(text: &str, color: Color32) -> egui::Button<'static> {
         .fill(Color32::TRANSPARENT)
         .stroke(Stroke::new(1.0_f32, with_alpha(color, 90)))
         .min_size(vec2(0.0, 30.0))
-        .rounding(9.0)
+        .corner_radius(9.0)
 }
 
 /// A big clickable tile with a title and a wrapped description. Returns true
@@ -217,6 +234,7 @@ pub fn choice_card(ui: &mut egui::Ui, title: &str, description: &str, tag: &str)
                     BORDER
                 },
             ),
+            egui::StrokeKind::Middle,
         );
         painter.text(
             rect.left_top() + vec2(20.0, 20.0),
@@ -270,11 +288,11 @@ pub fn show_toast(ctx: &egui::Context, slot: &mut Option<Toast>) {
         .anchor(Align2::RIGHT_BOTTOM, vec2(-22.0, -22.0))
         .order(egui::Order::Tooltip)
         .show(ctx, |ui| {
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(Color32::from_rgb(20, 25, 40))
                 .stroke(Stroke::new(1.0_f32, with_alpha(current.color, 140)))
-                .rounding(12.0)
-                .inner_margin(Margin::symmetric(16.0, 11.0))
+                .corner_radius(12.0)
+                .inner_margin(Margin::symmetric(16, 11))
                 .show(ui, |ui| {
                     ui.label(RichText::new(&current.text).size(13.5).color(current.color));
                 });

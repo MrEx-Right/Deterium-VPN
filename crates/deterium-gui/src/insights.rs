@@ -457,11 +457,11 @@ fn metric_tile(
 ) {
     // Tighter than the shared card: four of these share one row, and the
     // window can be as narrow as 860 px.
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(with_alpha(CARD, 215))
         .stroke(Stroke::new(1.0_f32, BORDER))
-        .rounding(12.0)
-        .inner_margin(Margin::symmetric(12.0, 10.0))
+        .corner_radius(12.0)
+        .inner_margin(Margin::symmetric(12, 10))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_min_height(84.0);
@@ -860,7 +860,7 @@ impl DeteriumApp {
                 ui.label(RichText::new("OpenVPN").size(12.0).color(DIM));
                 egui::ScrollArea::vertical()
                     .max_height(180.0)
-                    .id_source("openvpn_log")
+                    .id_salt("openvpn_log")
                     .show(ui, |ui| {
                         for line in lines.iter().rev().take(40).rev() {
                             ui.add(
@@ -1005,9 +1005,11 @@ mod tests {
         let draw = |app: &mut DeteriumApp| {
             for tab in [Tab::Traffic, Tab::Connection, Tab::Protection, Tab::Log] {
                 app.insight_tab = tab;
-                let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| app.show_insights(ui, &stored));
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| app.show_insights(ui, &stored));
                 });
+                // No renderer here; egui insists texture updates are not just dropped.
+                output.textures_delta.clear();
             }
         };
 

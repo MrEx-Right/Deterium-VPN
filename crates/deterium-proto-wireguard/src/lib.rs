@@ -253,8 +253,7 @@ pub fn connect_with(
         config.keepalive,
         0,
         None,
-    )
-    .map_err(|e| AdapterError::ConnectFailed(format!("initialize noise tunnel: {e}")))?;
+    );
 
     let factory: SocketFactory = Box::new(open);
     let shared = Shared::new(
@@ -348,7 +347,7 @@ pub fn public_key_from_private(private_key: &str) -> Result<String, String> {
 
 fn random_32() -> Result<[u8; 32], String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|e| format!("system randomness unavailable: {e}"))?;
+    getrandom::fill(&mut bytes).map_err(|e| format!("system randomness unavailable: {e}"))?;
     Ok(bytes)
 }
 
