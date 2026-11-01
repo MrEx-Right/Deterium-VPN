@@ -14,13 +14,17 @@
   <img alt="Status" src="https://img.shields.io/badge/status-early%20prototype-yellow">
 </p>
 
+<p align="center">
+  <img src="docs/images/screenshot.png" alt="The Deterium window: server list on the left, the power button and live traffic panels on the right" width="100%">
+</p>
+
 ---
 
 ## What is Deterium?
 
 Most "VPN apps" are really VPN *providers*: they run the exit servers, see your traffic and tie you to one protocol. **Deterium removes the provider.** You bring a server you own (or a WireGuard / OpenVPN service you subscribe to). Deterium is the app that sets it up, lets you configure every detail, and connects.
 
-- **Nothing of ours in the data path.** No Deterium servers, no accounts, no telemetry. Traffic only ever touches your server.
+- **Nothing of ours in the data path.** No Deterium servers, no accounts, no telemetry. Traffic only ever touches your server. The one request the app makes by itself is a check for a newer release on GitHub when it starts (see *Update* below).
 - **Bring your own protocol.** WireGuard (runs inside the app) and OpenVPN (bundled, nothing to install) behind one interface.
 - **Everything from the UI.** Add, import, edit every setting, duplicate, export and delete servers without opening a file.
 - **Self-hosting made easy.** The setup wizard turns any Debian/Ubuntu VPS into your VPN endpoint with one pasted script. Your private key never leaves your PC.
@@ -36,7 +40,7 @@ Most "VPN apps" are really VPN *providers*: they run the exit servers, see your 
 | **Crash-safe** | The rules belong to the service process, so Windows lifts them by itself if it dies, and leftovers from a crashed run are cleaned up on the next start |
 | **Health detection** | A silent server turns the status to *Reconnecting*, and the tunnel recovers on its own |
 | **Background service** | Install once (one permission prompt) and never need administrator rights again; the tunnel survives closing or crashing the window |
-| **System tray** | Colour-coded icon (grey / blue / green / orange), connect and disconnect from its menu, `--minimized` starts straight in the tray |
+| **System tray** | Colour-coded icon (grey / blue / green / orange), connect and disconnect from its menu, `--minimized` starts straight in the tray. Closing the window really hides it; the app keeps running in the tray, and starting it again brings that copy back instead of opening a second one |
 | **Secrets at rest** | Private keys, preshared keys and OpenVPN logins are encrypted with Windows DPAPI; the files only open for your Windows account on this PC |
 | **Import / export** | WireGuard `.conf`, OpenVPN `.ovpn` and Deterium `.toml`, by file, paste or drag and drop. Imported configs that could run programs, write files or open a control port are refused |
 | **Honest status** | Live download/upload speed, latency and totals read from the tunnel adapter (the same for WireGuard and OpenVPN), a two-minute traffic graph, and Traffic / Connection / Protection / Log tabs. Latency is a real ping to an address inside the tunnel; the exit IP is only looked up when you press the button. No fake speeds or placeholder IPs |
@@ -62,7 +66,7 @@ No administrator rights are needed to install. The installer puts no driver on y
 
 Keep `Deterium.exe` where the installer put it: moving or deleting it breaks the Start Menu shortcut. The background service, if you installed it, keeps its own copy in `C:\Program Files\Deterium` and is not affected.
 
-**Update:** download the new code, close Deterium (also from the tray icon) and run `Install-Deterium.bat` again. Your servers are kept.
+**Update:** download the new code, close Deterium (also from the tray icon) and run `Install-Deterium.bat` again. Your servers are kept. When Deterium starts it asks GitHub (`api.github.com`, over HTTPS) for the project's release tags once, and if a newer one is out the sidebar says *Update available*. Nothing is sent except that request; if it fails (offline, or the kill switch is holding the network) it tries once more after a tunnel is up, and otherwise says nothing.
 
 **Remove:** *Settings > Apps > Deterium VPN*, or run `uninstall.ps1` from `%LOCALAPPDATA%\Deterium`. It deletes only `Deterium.exe`, never your Desktop folder, and removes the background service if it is installed (one permission prompt). Your saved servers are kept unless you pass `-RemoveData`.
 
@@ -175,4 +179,4 @@ Deterium changes how your computer routes traffic and handles private keys, so i
 
 ## License
 
-TBD. A permissive or copyleft open-source license will be chosen before the first release.
+GNU Affero General Public License, version 3 only (`AGPL-3.0-only`). The full text is in [LICENSE](LICENSE). The bundled OpenVPN and Wintun keep their own licenses (see [THIRD-PARTY.md](THIRD-PARTY.md)).

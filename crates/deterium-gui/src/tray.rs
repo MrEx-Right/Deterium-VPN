@@ -82,87 +82,7 @@ mod imp {
         Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     };
 
-    use std::sync::atomic::{AtomicI32, Ordering};
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, GetWindowRect, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-        ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-        SW_HIDE, SW_RESTORE, SW_SHOWNOACTIVATE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
-    };
-
-    /// Where the window was before it went to the tray.
-    static SAVED_X: AtomicI32 = AtomicI32::new(100);
-    static SAVED_Y: AtomicI32 = AtomicI32::new(100);
-    const OFF_SCREEN: i32 = -32_000;
-
-    fn raw(hwnd: isize) -> *mut std::ffi::c_void {
-        hwnd as *mut std::ffi::c_void
-    }
-
-    /// Puts the window "in the tray": no taskbar button, no Alt+Tab entry,
-    /// parked off screen. It is deliberately still a visible window, because
-    /// Windows doesn't redraw hidden or minimised ones and the app would then
-    /// stop noticing connection changes (and tray clicks).
-    fn hide_window(hwnd: isize) {
-        // SAFETY: plain Win32 calls on this process's own window; safe from any thread.
-        unsafe {
-            let h = raw(hwnd);
-            let mut rect: RECT = std::mem::zeroed();
-            if GetWindowRect(h, &mut rect) != 0 && rect.left > OFF_SCREEN / 2 {
-                SAVED_X.store(rect.left, Ordering::Relaxed);
-                SAVED_Y.store(rect.top, Ordering::Relaxed);
-            }
-            ShowWindow(h, SW_RESTORE);
-            // The taskbar button only goes away if the window is hidden while
-            // its style changes.
-            ShowWindow(h, SW_HIDE);
-            let style = GetWindowLongPtrW(h, GWL_EXSTYLE);
-            SetWindowLongPtrW(
-                h,
-                GWL_EXSTYLE,
-                (style | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize),
-            );
-            SetWindowPos(
-                h,
-                std::ptr::null_mut(),
-                OFF_SCREEN,
-                OFF_SCREEN,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            );
-            ShowWindow(h, SW_SHOWNOACTIVATE);
-        }
-    }
-
-    /// Brings the window back where it was, with its taskbar button.
-    fn show_window(hwnd: isize) {
-        // SAFETY: as in `hide_window`.
-        unsafe {
-            let h = raw(hwnd);
-            ShowWindow(h, SW_HIDE);
-            let style = GetWindowLongPtrW(h, GWL_EXSTYLE);
-            SetWindowLongPtrW(
-                h,
-                GWL_EXSTYLE,
-                (style & !(WS_EX_TOOLWINDOW as isize)) | WS_EX_APPWINDOW as isize,
-            );
-            SetWindowPos(
-                h,
-                std::ptr::null_mut(),
-                SAVED_X.load(Ordering::Relaxed),
-                SAVED_Y.load(Ordering::Relaxed),
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
-            );
-            ShowWindow(h, SW_RESTORE);
-            SetForegroundWindow(h);
-        }
-    }
-
     pub struct Tray {
-        window: Option<isize>,
         icon: TrayIcon,
         status: MenuItem,
         toggle: MenuItem,
@@ -171,10 +91,10 @@ mod imp {
     }
 
     impl Tray {
-        /// `window` is the native handle of the app window. A window hidden in
-        /// the tray is not redrawn, so egui would never see the user's click:
-        /// the tray's own thread wakes it with the Windows API first.
-        pub fn new(ctx: &egui::Context, window: Option<isize>) -> Option<Self> {
+        /// The window may be hidden when the user clicks: eframe still runs the
+        /// app's `logic` then, so queueing the click and asking for a repaint
+        /// is enough for the app to see it and show itself.
+        pub fn new(ctx: &egui::Context) -> Option<Self> {
             let actions: Arc<Mutex<Vec<Action>>> = Arc::default();
 
             let open = MenuItem::new("Open Deterium", true, None);
@@ -217,9 +137,6 @@ mod imp {
                     } else {
                         return;
                     };
-                    if let (Action::Open, Some(hwnd)) = (action, window) {
-                        show_window(hwnd);
-                    }
                     queue.lock().unwrap_or_else(|e| e.into_inner()).push(action);
                     ctx.request_repaint();
                 }));
@@ -239,9 +156,6 @@ mod imp {
                         }
                     );
                     if clicked {
-                        if let Some(hwnd) = window {
-                            show_window(hwnd);
-                        }
                         queue
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
@@ -252,27 +166,12 @@ mod imp {
             }
 
             Some(Self {
-                window,
                 icon: tray,
                 status,
                 toggle,
                 shown: None,
                 actions,
             })
-        }
-
-        /// Sends the window to the tray (see `hide_window`).
-        pub fn hide_window(&self) {
-            if let Some(hwnd) = self.window {
-                hide_window(hwnd);
-            }
-        }
-
-        /// Brings the window back from the tray.
-        pub fn show_window(&self) {
-            if let Some(hwnd) = self.window {
-                show_window(hwnd);
-            }
         }
 
         /// What the user did since the last call.
@@ -305,11 +204,9 @@ mod imp {
     pub struct Tray;
 
     impl Tray {
-        pub fn new(_ctx: &egui::Context, _window: Option<isize>) -> Option<Self> {
+        pub fn new(_ctx: &egui::Context) -> Option<Self> {
             None
         }
-        pub fn hide_window(&self) {}
-        pub fn show_window(&self) {}
         pub fn take_actions(&self) -> Vec<Action> {
             Vec::new()
         }

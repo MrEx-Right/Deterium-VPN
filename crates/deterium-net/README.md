@@ -141,11 +141,16 @@ with no operating system involved.
 * **IPv6** is covered through routes (`::/0` is split like `0.0.0.0/0`) and,
   with the kill switch, by the catch-all block. IPv6 connectivity through a
   tunnel was not verified live.
-* **OpenVPN's kill switch starts when OpenVPN is connected**, not before: the
-  rules need the tunnel adapter and the server addresses OpenVPN actually uses.
-  Deterium creates the adapter itself (`hold_openvpn_adapter`), so the rules can
-  name it by its LUID. If OpenVPN switches to a server that was in neither the
-  config nor its earlier log lines, the rules are replaced when it reconnects.
+* **OpenVPN is held back before it starts.** Deterium creates the tunnel adapter
+  itself (`hold_openvpn_adapter`), so the rules can name it by its LUID, and
+  installs a hold (`build_hold_rules`: the servers from the `.ovpn`, DHCP,
+  loopback, the LAN if allowed, the adapter) before `openvpn.exe` runs. When
+  the config names its server by hostname, plain DNS stays open during the hold
+  so OpenVPN can look it up. The hold is widened when OpenVPN's log shows
+  another server, replaced by the full rules once OpenVPN reports the tunnel up,
+  and released if the attempt fails before it ever connected. If OpenVPN later
+  switches to a server that was in neither the config nor its earlier log
+  lines, the rules are replaced when it reconnects.
 * **Linux/macOS** are not implemented; `system_platform()` reports `Unsupported`.
 * **Privilege model**: the app either talks to the background service
   (`docs/adr/0004-windows-service.md`) or restarts itself elevated on request

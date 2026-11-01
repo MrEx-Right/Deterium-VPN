@@ -19,9 +19,11 @@ mod editor;
 mod hero;
 mod insights;
 mod logo;
+mod single;
 mod store;
 mod theme;
 mod tray;
+mod update;
 
 use deterium_core::export::{to_deterium_toml, to_wireguard_conf};
 use deterium_core::{AdapterError, ConnectMode, Protocol, ServerProfile, TunnelStatus, Uuid};
@@ -159,6 +161,8 @@ struct DeteriumApp {
     logo: Option<egui::TextureHandle>,
     /// The notification-area icon, when the system has one.
     tray: Option<tray::Tray>,
+    /// This copy's claim to be the only one; another copy started later rings it.
+    instance: Option<single::Instance>,
     /// Set by "Quit" so closing the window really ends the app.
     quitting: bool,
     /// The window is hidden in the tray (as opposed to being on screen).
@@ -181,6 +185,13 @@ struct DeteriumApp {
     autostart_server: Option<Uuid>,
     /// Set when Windows started this instance to connect at sign-in.
     autostart_job: Option<AutostartJob>,
+    /// A newer release than this build, once GitHub has said so.
+    newer: Option<update::Version>,
+    /// The update check that is still waiting for GitHub.
+    update_probe: Option<mpsc::Receiver<Result<Option<update::Version>, String>>>,
+    /// How many times this run has asked GitHub (see `poll_update`).
+    update_tries: u8,
+    update_done: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -290,6 +301,7 @@ impl Default for DeteriumApp {
             service_job: None,
             logo: None,
             tray: None,
+            instance: None,
             quitting: false,
             hidden: false,
             start_hidden: false,
@@ -308,15 +320,20 @@ impl Default for DeteriumApp {
                 next_try: Instant::now(),
                 started: false,
             }),
+            newer: None,
+            update_probe: None,
+            update_tries: 0,
+            update_done: false,
         }
     }
 }
 
 impl eframe::App for DeteriumApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = &ui.ctx().clone();
+    /// Everything that has to keep going while the window is hidden in the
+    /// tray. eframe calls this before every `ui`, and also on its own while
+    /// the window is hidden or minimised (then `ui` isn't called at all).
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_tray(ctx);
-        self.handle_dropped_files(ctx);
         if let Some(id) = self.auto_connect.take() {
             if self.profile(id).is_some() {
                 self.selected = Some(id);
@@ -327,6 +344,18 @@ impl eframe::App for DeteriumApp {
         self.poll_service(ctx);
         self.poll_held(ctx);
         self.run_autostart(ctx);
+        self.poll_update(ctx);
+        self.sync_tray();
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
+        // Windows doesn't count a hidden window as minimised, so eframe still
+        // asks for frames: nobody sees them, so don't draw.
+        if self.hidden {
+            return;
+        }
+        self.handle_dropped_files(ctx);
 
         paint_background(ctx, self.background_target());
 
@@ -371,7 +400,6 @@ impl eframe::App for DeteriumApp {
         self.show_elevation_dialog(ctx);
         self.show_service_dialog(ctx);
         show_toast(ctx, &mut self.toast);
-        self.sync_tray();
     }
 }
 
@@ -864,6 +892,27 @@ impl DeteriumApp {
                     .color(DIM),
             )
             .on_hover_text(concat!("Deterium VPN ", env!("CARGO_PKG_VERSION")));
+            if let Some(newer) = self.newer {
+                ui.add_space(2.0);
+                if ui
+                    .add(
+                        egui::Label::new(
+                            RichText::new(format!("Update available: v{newer}"))
+                                .size(11.5)
+                                .color(ACCENT),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text(format!(
+                        "Deterium {newer} is out (this is {}). To update, download the new source and run Install-Deterium.bat again. Click to open the project page.",
+                        env!("CARGO_PKG_VERSION")
+                    ))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(update::REPO_URL));
+                }
+            }
             ui.add_space(2.0);
             let (text, color) = match self.service_state {
                 ServiceState::Running => ("Background service: running", GOOD),
@@ -1127,10 +1176,16 @@ impl DeteriumApp {
     fn handle_tray(&mut self, ctx: &egui::Context) {
         if self.start_hidden {
             self.start_hidden = false;
-            if let Some(tray) = &self.tray {
-                self.hidden = true;
-                tray.hide_window();
+            if self.tray.is_some() {
+                self.hide(ctx);
             }
+        }
+        if self
+            .instance
+            .as_ref()
+            .is_some_and(|instance| instance.show_requested())
+        {
+            self.bring_back(ctx);
         }
 
         let actions = self
@@ -1140,10 +1195,7 @@ impl DeteriumApp {
             .unwrap_or_default();
         for action in actions {
             match action {
-                tray::Action::Open => {
-                    self.hidden = false;
-                    self.bring_back(ctx);
-                }
+                tray::Action::Open => self.bring_back(ctx),
                 tray::Action::Toggle => {
                     if matches!(self.connection, Connection::Active { .. }) {
                         self.disconnect();
@@ -1154,7 +1206,6 @@ impl DeteriumApp {
                     if self.elevation_prompt.is_some()
                         || matches!(self.connection, Connection::Failed { .. })
                     {
-                        self.hidden = false;
                         self.bring_back(ctx);
                     }
                 }
@@ -1170,19 +1221,25 @@ impl DeteriumApp {
             && ctx.input(|input| input.viewport().close_requested())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if let Some(tray) = &self.tray {
-                self.hidden = true;
-                tray.hide_window();
-            }
+            self.hide(ctx);
         }
     }
 
-    /// Brings the window back from the tray.
-    fn bring_back(&self, ctx: &egui::Context) {
-        if let Some(tray) = &self.tray {
-            tray.show_window();
-        }
+    /// Sends the window to the tray: a really hidden window, so no taskbar
+    /// button and no Alt+Tab entry. The app keeps running in `logic`.
+    fn hide(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
+    /// Brings the window back from the tray (or from the taskbar, if it was
+    /// minimised), where it was before.
+    fn bring_back(&mut self, ctx: &egui::Context) {
+        self.hidden = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
     }
 
     /// Tells the tray icon what is going on.
@@ -1235,7 +1292,7 @@ impl DeteriumApp {
             return;
         };
         let id = job.id;
-        // Keeps ticking while the window is parked in the tray.
+        // Keeps `logic` ticking while the window is hidden in the tray.
         ctx.request_repaint_after(Duration::from_secs(1));
 
         let seen = match &self.connection {
@@ -1365,6 +1422,52 @@ impl DeteriumApp {
             self.held_probe = Some(receiver);
         } else if self.service_state != ServiceState::Running {
             self.held = None;
+        }
+    }
+
+    /// Asks GitHub, off the UI thread, whether a newer release is out (see
+    /// [`update`]): once when the app starts, and if that fails (offline, or
+    /// the kill switch is holding the network at sign-in) once more when a
+    /// tunnel is up. A failed check says nothing.
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        if let Some(probe) = &self.update_probe {
+            ctx.request_repaint_after(Duration::from_millis(250));
+            let answer = match probe.try_recv() {
+                Ok(answer) => answer,
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => Err("the check stopped".to_string()),
+            };
+            self.update_probe = None;
+            if let Ok(newer) = answer {
+                self.update_done = true;
+                self.newer = newer;
+                if let (Some(version), None) = (newer, &self.toast) {
+                    self.toast = Some(toast(
+                        format!("Deterium {version} is out. See the bottom of the sidebar"),
+                        ACCENT,
+                    ));
+                }
+            }
+            return;
+        }
+        let tunnel_up = matches!(
+            &self.connection,
+            Connection::Active { status, .. } if *status == TunnelStatus::Connected
+        );
+        let due = !self.update_done
+            && match self.update_tries {
+                0 => true,
+                1 => tunnel_up,
+                _ => false,
+            };
+        if due {
+            self.update_tries += 1;
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(update::check());
+            });
+            self.update_probe = Some(receiver);
+            ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
 
@@ -1670,7 +1773,11 @@ impl DeteriumApp {
             Some(Choice::Restart) => {
                 self.elevation_prompt = None;
                 match deterium_engine::relaunch_elevated(&["--connect".into(), id.to_string()]) {
-                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Ok(()) => {
+                        // Really end, not hide in the tray: the new copy takes over.
+                        self.quitting = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                     Err(deterium_engine::ElevateError::Declined) => {
                         self.toast = Some(toast(
                             "Cancelled — still running without administrator rights",
@@ -1734,21 +1841,6 @@ fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
 }
 
-/// The native window handle, which the tray uses to wake a hidden window.
-#[cfg(windows)]
-fn native_window(cc: &eframe::CreationContext<'_>) -> Option<isize> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    match cc.window_handle().ok()?.as_raw() {
-        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
-        _ => None,
-    }
-}
-
-#[cfg(not(windows))]
-fn native_window(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
-    None
-}
-
 fn main() -> eframe::Result<()> {
     // The same file is also the installer and the background service:
     // `Deterium.exe service install|uninstall|run ...` never opens a window.
@@ -1759,6 +1851,19 @@ fn main() -> eframe::Result<()> {
             std::process::exit(deterium_service::cli::run(args));
         }
     }
+
+    // Already running: show that copy (unless this start is a silent one, like
+    // sign-in with `--minimized`) and leave. A copy restarted with administrator
+    // rights (`--connect`) gives the one that launched it a moment to close.
+    let minimized = std::env::args().any(|arg| arg == "--minimized");
+    let patience = if std::env::args().any(|arg| arg == "--connect") {
+        Duration::from_secs(5)
+    } else {
+        Duration::ZERO
+    };
+    let Some(instance) = single::claim(!minimized, patience) else {
+        return Ok(());
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -1779,9 +1884,11 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| {
             apply_style(&cc.egui_ctx);
+            instance.listen(&cc.egui_ctx);
             Ok(Box::new(DeteriumApp {
-                tray: tray::Tray::new(&cc.egui_ctx, native_window(cc)),
-                start_hidden: std::env::args().any(|arg| arg == "--minimized"),
+                tray: tray::Tray::new(&cc.egui_ctx),
+                instance: Some(instance),
+                start_hidden: minimized,
                 ..Default::default()
             }))
         }),

@@ -18,12 +18,13 @@ deterium-proto-wireguard.workspace = true
 # glow (OpenGL) as in 0.28; 0.36 switched its default renderer to wgpu.
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "links", "wayland", "web_screen_reader", "x11"] }
 rfd = "0.14"
+serde.workspace = true
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 deterium-service.workspace = true
 tray-icon = { version = "0.19", default-features = false }
-raw-window-handle = "0.6"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Security", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 png = "0.18"

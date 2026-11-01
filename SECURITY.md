@@ -48,7 +48,8 @@ These are documented and on the roadmap:
   while it restarts a crashed service. Without the service installed the kill
   switch lasts only as long as the app.
 - While the network is held after a restart there is no internet until you
-  connect or turn the protection off: there is no auto-connect yet.
+  connect or turn the protection off. The service never connects by itself;
+  "Start with Windows" (below) lets the app do it once you sign in.
 - The OpenVPN kill switch is in force before OpenVPN starts: only the VPN
   server (and DHCP, and the local network if allowed) can be reached while it
   connects. If the `.ovpn` uses a name for its server, plain DNS is open during
@@ -65,6 +66,11 @@ These are documented and on the roadmap:
   after a restart there is no internet until the app has connected (a few
   seconds after sign-in) or the user turns the protection off. If it can't
   connect after a few tries it stops and says so.
+- Each time it starts, the app makes one HTTPS request to `api.github.com` for
+  the repository's release tags, to say when an update is out. Nothing about
+  you or your servers is in it, but GitHub sees the address it comes from (your
+  own, or your VPN server's if a tunnel is already up) and that a copy of
+  Deterium just started.
 - The built-in OpenVPN is run as a separate program from an administrator-only folder; its own vulnerabilities are fixed by updating Deterium (see THIRD-PARTY.md for the bundled version).
 - Secrets are protected against other Windows accounts and against copying the
   files to another PC, **not** against malware already running as the same user.

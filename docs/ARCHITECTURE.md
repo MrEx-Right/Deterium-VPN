@@ -164,8 +164,9 @@ The GUI is a genuine native desktop app, not a webview/Electron/Tauri shell — 
 - **Threading.** No async runtime is needed: WireGuard's session runs on its own thread inside the adapter and OpenVPN is a child process; the egui loop only polls cheap shared state each frame and never blocks on I/O.
 - **Module layout** (`crates/deterium-gui/src`): `theme` (palette, painting helpers, widgets), `store` (disk persistence and catalog), `draft` (the editor's text-field model to and from `ServerProfile`, tested), `editor` (chooser, editor form, setup wizard), `hero` (power button, tiles, server rows), `main` (app state and screens).
 - **Administrator rights.** Two ways, see [ADR 0004](adr/0004-windows-service.md) and [ADR 0003](adr/0003-privilege-model.md). With the **background service** installed (sidebar footer or the permission dialog, one UAC prompt, once) the app runs as a normal user, sends the profile to the service over a user-restricted named pipe, and the tunnel and kill switch belong to the service: closing or crashing the window changes nothing, and the next start re-attaches (with the real uptime). Without it, connecting opens a dialog: *Install background service (recommended)*, *Restart as administrator* (relaunches through UAC and reconnects via `--connect <id>`), *Test connection only*, or *Cancel*. An elevated start also reverts network changes a crashed earlier run left behind.
-- **System tray** (`crates/deterium-gui/src/tray.rs`): the icon is drawn in code (no image files), shows the connection state and has Open / Connect-Disconnect / Quit. Closing the window parks it instead of quitting. It is deliberately *not* hidden or minimised, because Windows stops redrawing such windows and the app would no longer notice tray clicks or connection changes: it loses its taskbar button and moves off screen as a tool window. `--minimized` starts parked.
-- **Not built yet:** auto-connect at Windows start.
+- **System tray** (`crates/deterium-gui/src/tray.rs`): the icon is drawn in code (no image files), shows the connection state and has Open / Connect-Disconnect / Quit. Closing the window hides it instead of quitting (no taskbar button, no Alt+Tab entry). Everything that must keep going while it is hidden (tray clicks, polling the tunnel and the service, the sign-in connection, the update check, the tray icon) lives in eframe's `App::logic`, which eframe keeps calling for a hidden or minimised window; `App::ui` only draws, and draws nothing while hidden. `--minimized` starts hidden.
+- **Start with Windows** (`autostart.rs`): one `HKCU\...\Run` value starts the app hidden at sign-in and connects to one chosen server, retrying a few times while the network and the service come up.
+- **Update check** (`update.rs`): once per start, off the UI thread, the app asks `api.github.com` (HTTPS through WinHTTP, no extra TLS library) for the repository's tags and shows *Update available* in the sidebar when one is newer than the build. A failed check is silent and is retried once after a tunnel comes up.
 
 ## 5b. Secrets at rest
 
@@ -179,14 +180,13 @@ The GUI is a genuine native desktop app, not a webview/Electron/Tauri shell — 
 ## 6. Security model
 
 - No Deterium-operated server ever sits in the data path; trust boundary is exactly "you and your own server."
-- No telemetry/phone-home from the app by default.
+- No telemetry from the app. The only request it makes by itself is the update check: one HTTPS request for the repository's tags on `api.github.com` per start, with nothing about the user or their servers in it.
 - Secrets (private keys, auth tokens) stay on-device/on-server; `ServerProfile` export redacts or re-generates keys rather than reusing a single shared secret across exports where the protocol allows it (e.g. per-peer WireGuard keys).
 
 ## 7. Open questions (to resolve before implementation)
 
 - The kill switch survives the *app* crashing (the background service owns it). Its rules are a dynamic WFP session, so Windows removes them if the service process ends (deliberate, a bug can never lock someone offline; the service restarts itself within 5 s). Once a tunnel with the kill switch has come up, the service keeps a note (`armed.json`) and a service that starts with the note present holds the network before it answers anyone, until the user connects or turns the protection off. What remains open is the time before the service is running; persistent filters would close it but a wrong persistent rule can lock a user out.
 - Secrets are encrypted at rest on Windows (DPAPI, tied to the Windows user) but the app and any program running as the same user can still read them while it runs; Linux has no equivalent yet (files are `0600`). The service never stores a profile: the app decrypts it and sends it over the pipe, and the service keeps it in memory only.
-- License choice (see README).
 - Whether to bundle default servers at all, and if so which and with what consent flow: [ADR 0002](adr/0002-default-servers.md).
 
 ## 8. Non-goals
