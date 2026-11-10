@@ -157,6 +157,14 @@ struct DeteriumApp {
     service_dialog: bool,
     /// An install/remove that is waiting on the Windows permission prompt.
     service_job: Option<ServiceJob>,
+    /// The running service's version, once it has said.
+    service_version: Option<String>,
+    /// The version question that is still waiting for the service.
+    version_probe: Option<mpsc::Receiver<Option<String>>>,
+    /// The running service has been asked for its version since it started.
+    version_asked: bool,
+    /// The update offer has already opened by itself in this run.
+    update_offered: bool,
     /// The logo shown in the sidebar header (created on first use).
     logo: Option<egui::TextureHandle>,
     /// The notification-area icon, when the system has one.
@@ -197,6 +205,8 @@ struct DeteriumApp {
 #[derive(Clone, Copy, PartialEq)]
 enum ServiceAction {
     Install,
+    /// Install again over an older service, so it runs this build's code.
+    Update,
     Remove,
 }
 
@@ -299,6 +309,10 @@ impl Default for DeteriumApp {
             service_checked: Instant::now(),
             service_dialog: false,
             service_job: None,
+            service_version: None,
+            version_probe: None,
+            version_asked: false,
+            update_offered: false,
             logo: None,
             tray: None,
             instance: None,
@@ -916,7 +930,9 @@ impl DeteriumApp {
                 }
             }
             ui.add_space(2.0);
+            let outdated = self.outdated_service().is_some();
             let (text, color) = match self.service_state {
+                ServiceState::Running if outdated => ("Background service: update needed", WARN),
                 ServiceState::Running => ("Background service: running", GOOD),
                 ServiceState::Stopped => ("Background service: stopped", WARN),
                 ServiceState::NotInstalled => ("Background service: not installed", DIM),
@@ -926,7 +942,11 @@ impl DeteriumApp {
                     egui::Label::new(RichText::new(text).size(11.5).color(color))
                         .sense(egui::Sense::click()),
                 )
-                .on_hover_text("Click to manage")
+                .on_hover_text(if outdated {
+                    "The service runs an older version than this app. Click to update it."
+                } else {
+                    "Click to manage"
+                })
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
             {
@@ -1564,11 +1584,52 @@ impl DeteriumApp {
             });
     }
 
+    /// The version of the running service when it is older than this app.
+    fn outdated_service(&self) -> Option<&str> {
+        let version = self.service_version.as_deref()?;
+        (self.service_state == ServiceState::Running && update::is_older(version))
+            .then_some(version)
+    }
+
+    /// Asks a newly running service which version it is (off the UI thread)
+    /// and opens the update offer once per run when it is older than the app.
+    fn poll_service_version(&mut self, ctx: &egui::Context) {
+        if self.service_state != ServiceState::Running {
+            self.service_version = None;
+            self.version_asked = false;
+            return;
+        }
+        if !self.version_asked && self.service_job.is_none() {
+            self.version_asked = true;
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(deterium_engine::service_version());
+            });
+            self.version_probe = Some(receiver);
+        }
+        let Some(probe) = &self.version_probe else {
+            return;
+        };
+        match probe.try_recv() {
+            Ok(version) => {
+                self.version_probe = None;
+                self.service_version = version;
+                if self.outdated_service().is_some() && !self.update_offered {
+                    self.update_offered = true;
+                    self.service_dialog = true;
+                }
+            }
+            Err(mpsc::TryRecvError::Empty) => ctx.request_repaint_after(Duration::from_millis(200)),
+            Err(mpsc::TryRecvError::Disconnected) => self.version_probe = None,
+        }
+    }
+
     fn poll_service(&mut self, ctx: &egui::Context) {
         if self.service_checked.elapsed() > Duration::from_secs(2) {
             self.service_state = deterium_engine::service_state();
             self.service_checked = Instant::now();
         }
+        self.poll_service_version(ctx);
         let Some(job) = &self.service_job else {
             return;
         };
@@ -1580,10 +1641,30 @@ impl DeteriumApp {
         self.service_job = None;
         self.service_state = deterium_engine::service_state();
         self.service_checked = Instant::now();
+        // Whatever runs now may be another build: ask it again.
+        self.service_version = None;
+        self.version_probe = None;
+        self.version_asked = false;
 
         match (action, result) {
             (ServiceAction::Install, Ok(0)) => {
                 self.toast = Some(toast("Background service installed", GOOD));
+                if let Some(id) = then_connect {
+                    self.start_connect(id, ConnectMode::Full);
+                }
+            }
+            (ServiceAction::Update, Ok(0)) => {
+                // The old service took its tunnel down when it stopped.
+                if matches!(self.connection, Connection::Active { .. }) {
+                    self.connection = Connection::Idle;
+                }
+                self.toast = Some(toast(
+                    format!(
+                        "Background service updated to {}",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    GOOD,
+                ));
                 if let Some(id) = then_connect {
                     self.start_connect(id, ConnectMode::Full);
                 }
@@ -1624,11 +1705,12 @@ impl DeteriumApp {
         let mut args = vec![
             "service".to_string(),
             match action {
-                ServiceAction::Install => "install".to_string(),
+                // Installing over an existing service replaces it.
+                ServiceAction::Install | ServiceAction::Update => "install".to_string(),
                 ServiceAction::Remove => "uninstall".to_string(),
             },
         ];
-        if action == ServiceAction::Install {
+        if action != ServiceAction::Remove {
             let Some(sid) = deterium_engine::current_user_sid() else {
                 self.toast = Some(toast(
                     "Couldn't work out which Windows account you use",
@@ -1658,6 +1740,12 @@ impl DeteriumApp {
         }
         let busy = self.service_job.is_some();
         let state = self.service_state;
+        let outdated = self.outdated_service().map(str::to_owned);
+        // The server to reconnect to once an update has replaced the service.
+        let connected_to = match &self.connection {
+            Connection::Active { profile, .. } => Some(*profile),
+            _ => None,
+        };
         let mut close = false;
         let mut action = None;
 
@@ -1668,22 +1756,43 @@ impl DeteriumApp {
             .show(ctx, |ui| {
                 ui.set_max_width(460.0);
                 let (text, color) = match state {
+                    ServiceState::Running if outdated.is_some() => {
+                        ("Installed, but out of date", WARN)
+                    }
                     ServiceState::Running => ("Installed and running", GOOD),
                     ServiceState::Stopped => ("Installed, but not running", WARN),
                     ServiceState::NotInstalled => ("Not installed", DIM),
                 };
                 ui.label(RichText::new(text).color(color).strong());
                 ui.add_space(6.0);
-                ui.label(
-                    "The service runs the VPN in the background. With it, Deterium VPN never \
-                     asks for administrator rights again, the VPN stays up when you close this \
-                     window, and the kill switch keeps protecting you even if the app crashes.",
-                );
-                ui.add_space(4.0);
-                ui.label(dim(
-                    "Installing needs one Windows permission prompt. Only your Windows \
-                     account can control it.",
-                ));
+                if let Some(old) = &outdated {
+                    ui.label(format!(
+                        "The service is version {old}; this app is {}. Rebuilding the app \
+                         doesn't replace the service, so it still runs the old code, kill \
+                         switch included. Update it to this version.",
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                    ui.add_space(4.0);
+                    ui.label(dim(if connected_to.is_some() {
+                        "Your VPN drops for a few seconds while the service is replaced, \
+                         then connects again by itself. The kill switch is off during those \
+                         seconds. Needs one Windows permission prompt."
+                    } else {
+                        "Needs one Windows permission prompt."
+                    }));
+                } else {
+                    ui.label(
+                        "The service runs the VPN in the background. With it, Deterium VPN \
+                         never asks for administrator rights again, the VPN stays up when you \
+                         close this window, and the kill switch keeps protecting you even if \
+                         the app crashes.",
+                    );
+                    ui.add_space(4.0);
+                    ui.label(dim(
+                        "Installing needs one Windows permission prompt. Only your Windows \
+                         account can control it.",
+                    ));
+                }
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
                     if busy {
@@ -1694,6 +1803,9 @@ impl DeteriumApp {
                             action = Some(ServiceAction::Install);
                         }
                     } else {
+                        if outdated.is_some() && ui.add(primary_button("Update")).clicked() {
+                            action = Some(ServiceAction::Update);
+                        }
                         if state == ServiceState::Stopped
                             && ui.add(primary_button("Repair")).clicked()
                         {
@@ -1713,7 +1825,8 @@ impl DeteriumApp {
             self.service_dialog = false;
         }
         if let Some(action) = action {
-            self.start_service_job(action, None);
+            let then_connect = connected_to.filter(|_| action == ServiceAction::Update);
+            self.start_service_job(action, then_connect);
         }
     }
 

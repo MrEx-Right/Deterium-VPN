@@ -46,6 +46,17 @@ impl Version {
     }
 }
 
+/// Whether `other` (the background service's version) is older than this
+/// build. A version that can't be read is not called older: every build of
+/// the service reports a plain `x.y.z`.
+pub fn is_older(other: &str) -> bool {
+    older_than(other, Version::current())
+}
+
+fn older_than(other: &str, this: Version) -> bool {
+    Version::parse(other).is_some_and(|other| other < this)
+}
+
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}.{}.{}", self.0, self.1, self.2)
@@ -219,6 +230,18 @@ mod tests {
         assert_eq!(Version::parse("0.4.0"), Some(Version(0, 4, 0)));
         assert_eq!(Version::parse("v0.3.0"), Some(Version(0, 3, 0)));
         assert_eq!(Version::parse(" V1.10.2 "), Some(Version(1, 10, 2)));
+    }
+
+    #[test]
+    fn only_an_older_service_needs_an_update() {
+        let app = Version(0, 6, 1);
+        assert!(older_than("0.1.0", app));
+        assert!(older_than("0.6.0", app));
+        assert!(!older_than("0.6.1", app));
+        // A newer service (an older app build was started) works fine.
+        assert!(!older_than("0.7.0", app));
+        assert!(!older_than("", app));
+        assert!(!older_than("0.6", app));
     }
 
     #[test]

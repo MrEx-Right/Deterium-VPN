@@ -182,6 +182,25 @@ pub fn connect_via_service(profile: &ServerProfile) -> Result<Option<RemoteTunne
     }
 }
 
+/// The version of the running background service (`0.6.1`), if it answers.
+///
+/// Rebuilding the app does not touch the service: that is a separate copy in
+/// Program Files, so it keeps running the code it was installed with until it
+/// is installed again. The app compares this with its own version to say so.
+/// Not tied to a protocol match, so even a service too old to talk to can be
+/// recognised as old.
+pub fn service_version() -> Option<String> {
+    if deterium_ipc::service_state() != ServiceState::Running {
+        return None;
+    }
+    match Client::new().call(&Request::Hello).ok()? {
+        Response::Hello {
+            service_version, ..
+        } => Some(service_version),
+        _ => None,
+    }
+}
+
 /// The profile whose kill switch the service is keeping armed while no
 /// tunnel is up (after a restart or a reboot), if any. In that state the
 /// network is blocked except for the VPN server.

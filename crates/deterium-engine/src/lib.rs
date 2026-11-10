@@ -18,7 +18,7 @@ pub use deterium_net::{
 };
 pub use deterium_proto_openvpn::{bundled_available, bundled_version, find_openvpn};
 pub use deterium_proto_wireguard::TunnelStats;
-pub use remote::{service_armed, service_disarm, RemoteTunnel};
+pub use remote::{service_armed, service_disarm, service_version, RemoteTunnel};
 
 pub enum Tunnel {
     WireGuard(WireGuardTunnelHandle),
