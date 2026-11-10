@@ -1190,7 +1190,7 @@ impl DeteriumApp {
 
         let actions = self
             .tray
-            .as_ref()
+            .as_mut()
             .map(|tray| tray.take_actions())
             .unwrap_or_default();
         for action in actions {
@@ -1202,12 +1202,11 @@ impl DeteriumApp {
                     } else if let Some(id) = self.selected {
                         self.start_connect(id, ConnectMode::Full);
                     }
-                    // A permission prompt or an error needs to be seen.
-                    if self.elevation_prompt.is_some()
-                        || matches!(self.connection, Connection::Failed { .. })
-                    {
-                        self.bring_back(ctx);
-                    }
+                    self.show_if_it_needs_the_user(ctx);
+                }
+                tray::Action::ConnectTo(id) => {
+                    self.switch_from_tray(id);
+                    self.show_if_it_needs_the_user(ctx);
                 }
                 tray::Action::Quit => {
                     self.quitting = true;
@@ -1222,6 +1221,35 @@ impl DeteriumApp {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.hide(ctx);
+        }
+    }
+
+    /// A server picked in the tray's "Connect to" submenu: the tunnel that is
+    /// up (if any) goes down first, then this server connects. Picking the
+    /// server that is already on changes nothing.
+    fn switch_from_tray(&mut self, id: Uuid) {
+        if self.profile(id).is_none() {
+            return;
+        }
+        if let Connection::Active { profile, .. } = &self.connection {
+            if *profile == id {
+                return;
+            }
+            self.disconnect();
+            // The old tunnel didn't come down cleanly: don't stack a second
+            // one on top of it. The error is shown when the window opens.
+            if matches!(self.connection, Connection::Failed { .. }) {
+                return;
+            }
+        }
+        self.selected = Some(id);
+        self.start_connect(id, ConnectMode::Full);
+    }
+
+    /// A permission prompt or an error after a tray action needs to be seen.
+    fn show_if_it_needs_the_user(&mut self, ctx: &egui::Context) {
+        if self.elevation_prompt.is_some() || matches!(self.connection, Connection::Failed { .. }) {
+            self.bring_back(ctx);
         }
     }
 
@@ -1251,6 +1279,15 @@ impl DeteriumApp {
             .selected
             .and_then(|id| self.profiles.iter().find(|p| p.profile.id == id))
             .map(|p| p.profile.name.clone());
+        let servers: Vec<(Uuid, String)> = self
+            .profiles
+            .iter()
+            .map(|p| (p.profile.id, p.profile.name.clone()))
+            .collect();
+        let active = match &self.connection {
+            Connection::Active { profile, .. } => Some(*profile),
+            _ => None,
+        };
 
         let summary = match &self.connection {
             Connection::Active {
@@ -1272,12 +1309,16 @@ impl DeteriumApp {
                     },
                     server: name,
                     connected: true,
+                    servers,
+                    active,
                 }
             }
             _ => tray::Summary {
                 look: tray::Look::Idle,
                 server: selected_name,
                 connected: false,
+                servers,
+                active,
             },
         };
         tray.show(summary);
