@@ -42,7 +42,13 @@ function Start-Hold([string]$Profile, [string]$Dir) {
 function Wait-Ready($Proc, [string]$Dir, [int]$TimeoutSec = 120) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        if (Test-Path (Join-Path $Dir "ready")) { return }
+        if (Test-Path (Join-Path $Dir "ready")) {
+            # The test's output goes to a file; pass its warnings (a retried
+            # connection) on to the runner so they show in the run summary.
+            Get-Content (Join-Path $Dir "test.log") -ErrorAction SilentlyContinue |
+                Where-Object { $_ -like "::warning::*" } | ForEach-Object { Write-Host $_ }
+            return
+        }
         if (Test-Path (Join-Path $Dir "failed")) {
             throw "the tunnel did not come up:`n$(Get-Content (Join-Path $Dir 'failed') -Raw)"
         }
