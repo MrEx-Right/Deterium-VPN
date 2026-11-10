@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64",
  "serde",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "deterium-core",
  "deterium-ipc",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-gui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ab_glyph",
  "deterium-core",
@@ -980,7 +980,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-ipc"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "deterium-core",
  "serde",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-net"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "deterium-core",
  "libloading 0.8.9",
@@ -1003,7 +1003,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-proto-openvpn"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "deterium-core",
  "deterium-net",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-proto-wireguard"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64",
  "boringtun",
@@ -1023,7 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-secrets"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64",
  "deterium-core",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "deterium-service"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "deterium-core",
  "deterium-engine",
