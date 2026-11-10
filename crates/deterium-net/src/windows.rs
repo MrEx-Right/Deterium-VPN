@@ -668,13 +668,16 @@ pub fn clear_adapter_routes(name: &str) -> usize {
         if ConvertInterfaceAliasToLuid(alias.as_ptr(), &mut luid) != NO_ERROR {
             return 0;
         }
-        let mut table: *mut MIB_IPFORWARD_TABLE2 = std::ptr::null_mut();
-        if GetIpForwardTable2(AF_UNSPEC, &mut table) != NO_ERROR {
+        // No null placeholder: the pointer only exists once Windows has written
+        // it, so a failed call can never leave a null pointer to dereference.
+        let mut out = std::mem::MaybeUninit::<*mut MIB_IPFORWARD_TABLE2>::uninit();
+        if GetIpForwardTable2(AF_UNSPEC, out.as_mut_ptr()) != NO_ERROR {
             return 0;
         }
-        if table.is_null() {
+        let Some(table) = std::ptr::NonNull::new(out.assume_init()) else {
             return 0;
-        }
+        };
+        let table = table.as_ptr();
         // `Table` is declared as a one-element array but really holds
         // `NumEntries` rows. Take its address without creating a reference to
         // that one-element array, so the pointer keeps the whole allocation as
