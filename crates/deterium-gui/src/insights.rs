@@ -736,7 +736,7 @@ impl DeteriumApp {
                     if ui
                         .add_enabled(!asking, ghost_button("Check exit IP", ACCENT))
                         .on_hover_text(
-                            "Asks api.ipify.org once, now, over the tunnel. Deterium never does this by itself.",
+                            "Asks api.ipify.org once, now, over the tunnel. Deterium VPN never does this by itself.",
                         )
                         .clicked()
                     {

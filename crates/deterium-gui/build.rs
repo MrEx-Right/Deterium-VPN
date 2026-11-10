@@ -1,4 +1,4 @@
-//! Gives `Deterium.exe` its icon and version information (what Explorer, the
+//! Gives `Deterium VPN.exe` its icon and version information (what Explorer, the
 //! desktop and the taskbar show for the file). The icon is `assets/deterium.ico`,
 //! rendered from the logo code by `cargo run -p deterium-gui --example make_icons`.
 //!
@@ -19,8 +19,8 @@ fn main() {
         .set_icon("assets/deterium.ico")
         .set("ProductName", "Deterium VPN")
         .set("FileDescription", "Deterium VPN - self-hosted VPN client")
-        .set("InternalName", "Deterium")
-        .set("OriginalFilename", "Deterium.exe")
+        .set("InternalName", "Deterium VPN")
+        .set("OriginalFilename", "Deterium VPN.exe")
         .set("CompanyName", "Deterium contributors")
         .set("LegalCopyright", "Deterium contributors")
         .set("ProductVersion", &version)

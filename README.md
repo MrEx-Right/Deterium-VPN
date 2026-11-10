@@ -28,7 +28,7 @@ Most "VPN apps" are really VPN *providers*: they run the exit servers, see your 
 - **Bring your own protocol.** WireGuard (runs inside the app) and OpenVPN (bundled, nothing to install) behind one interface.
 - **Everything from the UI.** Add, import, edit every setting, duplicate, export and delete servers without opening a file.
 - **Self-hosting made easy.** The setup wizard turns any Debian/Ubuntu VPS into your VPN endpoint with one pasted script. Your private key never leaves your PC.
-- **One file.** `Deterium.exe` is the app, the background service and the installer. The Wintun driver DLL and OpenVPN are inside it.
+- **One file.** `Deterium VPN.exe` is the app, the background service and the installer. The Wintun driver DLL and OpenVPN are inside it.
 
 ## Features
 
@@ -60,15 +60,15 @@ Deterium is built from source on your own PC. No ready-made program is distribut
 1. On GitHub choose **Code > Download ZIP**, then **extract it** (right-click > Extract All). Running the installer from inside the ZIP does not work.
 2. Double-click **`Install-Deterium.bat`**. Windows may warn "Windows protected your PC" because the file came from the internet and is not signed; choose **More info > Run anyway**. The file is a short wrapper around [`tools/install.ps1`](tools/install.ps1), which is short and readable.
 
-It then builds the app (a few minutes), asks whether to include the official OpenVPN (downloaded from OpenVPN Inc., checked against a pinned SHA-256 and signature, only unpacked, never installed), and installs for your user only: `Deterium.exe` lands on your **Desktop**, plus a Start Menu shortcut and an entry in *Settings > Apps*. The uninstaller is kept in `%LOCALAPPDATA%\Deterium`.
+It then builds the app (a few minutes), asks whether to include the official OpenVPN (downloaded from OpenVPN Inc., checked against a pinned SHA-256 and signature, only unpacked, never installed), and installs for your user only: `Deterium VPN.exe` lands on your **Desktop**, plus a Start Menu shortcut and an entry in *Settings > Apps*. The uninstaller is kept in `%LOCALAPPDATA%\Deterium`.
 
-No administrator rights are needed to install. The installer puts no driver on your PC. When you connect, the app uses the signed **Wintun** adapter driver from WireGuard LLC (inside `Deterium.exe`); that is the only driver Deterium ever uses.
+No administrator rights are needed to install. The installer puts no driver on your PC. When you connect, the app uses the signed **Wintun** adapter driver from WireGuard LLC (inside `Deterium VPN.exe`); that is the only driver Deterium ever uses.
 
-Keep `Deterium.exe` where the installer put it: moving or deleting it breaks the Start Menu shortcut. The background service, if you installed it, keeps its own copy in `C:\Program Files\Deterium` and is not affected.
+Keep `Deterium VPN.exe` where the installer put it: moving or deleting it breaks the Start Menu shortcut. The background service, if you installed it, keeps its own copy in `C:\Program Files\Deterium` and is not affected.
 
 **Update:** download the new code, close Deterium (also from the tray icon) and run `Install-Deterium.bat` again. Your servers are kept. When Deterium starts it asks GitHub (`api.github.com`, over HTTPS) for the project's release tags once, and if a newer one is out the sidebar says *Update available*. Nothing is sent except that request; if it fails (offline, or the kill switch is holding the network) it tries once more after a tunnel is up, and otherwise says nothing.
 
-**Remove:** *Settings > Apps > Deterium VPN*, or run `uninstall.ps1` from `%LOCALAPPDATA%\Deterium`. It deletes only `Deterium.exe`, never your Desktop folder, and removes the background service if it is installed (one permission prompt). Your saved servers are kept unless you pass `-RemoveData`.
+**Remove:** *Settings > Apps > Deterium VPN*, or run `uninstall.ps1` from `%LOCALAPPDATA%\Deterium`. It deletes only `Deterium VPN.exe`, never your Desktop folder, and removes the background service if it is installed (one permission prompt). Your saved servers are kept unless you pass `-RemoveData`.
 
 **If something goes wrong**
 
@@ -76,8 +76,8 @@ Keep `Deterium.exe` where the installer put it: moving or deleting it breaks the
 |---|---|
 | `Rust isn't installed` right after installing it | Open a new window, or sign out and in, then run the installer again. |
 | `linker 'link.exe' not found` or a build error mentioning MSVC | The C++ build tools are missing: install **Visual Studio Build Tools > Desktop development with C++**. |
-| `Couldn't replace ...\Deterium.exe` | Deterium is still running. Quit it from the tray icon and run the installer again. |
-| Antivirus quarantines `Deterium.exe` | The app is not code-signed, so some scanners are suspicious of any new program that changes routes. Check the source and the build yourself, then allow the file. |
+| `Couldn't replace ...\Deterium VPN.exe` | Deterium VPN is still running. Quit it from the tray icon and run the installer again. |
+| Antivirus quarantines `Deterium VPN.exe` | The app is not code-signed, so some scanners are suspicious of any new program that changes routes. Check the source and the build yourself, then allow the file. |
 | Anything else | Run `tools\install.ps1` in a PowerShell window to see the full output, and open an issue with it. |
 
 ## Get started
@@ -88,7 +88,7 @@ Keep `Deterium.exe` where the installer put it: moving or deleting it breaks the
 
 Turn on the **kill switch** per server in its editor. Servers are saved as one `.toml` file each in `%APPDATA%\Deterium\profiles` (set `DETERIUM_DATA_DIR` to move them).
 
-To remove the service, use the sidebar's *Background service* entry, or run `Deterium.exe service uninstall` from an administrator prompt. `Deterium.exe service status` tells you whether it is installed.
+To remove the service, use the sidebar's *Background service* entry, or run `"Deterium VPN.exe" service uninstall` from an administrator prompt. `"Deterium VPN.exe" service status` tells you whether it is installed.
 
 ## Build by hand
 
@@ -99,7 +99,7 @@ cargo test --workspace
 pwsh ./tools/fetch-openvpn.ps1         # optional, once: bundle OpenVPN before building
 ```
 
-The release binary is the whole app; rename it to `Deterium.exe` if you like (the service installer copies whatever file is running to `C:\Program Files\Deterium`). Without the OpenVPN step the build still works, just without built-in OpenVPN.
+The release binary is the whole app; rename it to `Deterium VPN.exe` if you like (the service installer copies whatever file is running to `C:\Program Files\Deterium`). Without the OpenVPN step the build still works, just without built-in OpenVPN.
 
 ## Status
 
@@ -175,7 +175,7 @@ Deterium changes how your computer routes traffic and handles private keys, so i
 
 ## Third-party software
 
-`Deterium.exe` embeds, unmodified and run as separate programs, **OpenVPN 2.6.17** (GPL-2.0 with the OpenSSL exception) and the **Wintun 0.14.1** driver DLL (WireGuard LLC). Versions, licenses, sources and the reason for OpenVPN 2.6 instead of 2.7 are in [THIRD-PARTY.md](THIRD-PARTY.md).
+`Deterium VPN.exe` embeds, unmodified and run as separate programs, **OpenVPN 2.6.17** (GPL-2.0 with the OpenSSL exception) and the **Wintun 0.14.1** driver DLL (WireGuard LLC). Versions, licenses, sources and the reason for OpenVPN 2.6 instead of 2.7 are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 ## License
 

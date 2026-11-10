@@ -319,7 +319,7 @@ fn open_socket(endpoint: SocketAddr, listen_port: Option<u16>) -> std::io::Resul
 fn net_error(error: NetError) -> AdapterError {
     match error {
         NetError::NotElevated => AdapterError::PermissionRequired(
-            "Deterium needs administrator rights to create the VPN adapter and routes".into(),
+            "Deterium VPN needs administrator rights to create the VPN adapter and routes".into(),
         ),
         other => AdapterError::ConnectFailed(other.to_string()),
     }

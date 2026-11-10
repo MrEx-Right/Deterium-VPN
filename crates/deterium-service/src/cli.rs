@@ -44,10 +44,10 @@ pub fn run(mut args: Vec<String>) -> i32 {
                 allow_sid: sid.clone(),
                 insecure_location: flag("--dev-insecure-location"),
             })
-            .map(|()| println!("Deterium service installed and running.")),
+            .map(|()| println!("Deterium VPN service installed and running.")),
             None => Err("install needs --allow-sid <the user's SID>".into()),
         },
-        "uninstall" => install::uninstall().map(|()| println!("Deterium service removed.")),
+        "uninstall" => install::uninstall().map(|()| println!("Deterium VPN service removed.")),
         "status" => {
             println!(
                 "{}",
@@ -81,7 +81,7 @@ pub fn run(mut args: Vec<String>) -> i32 {
 /// Stops the console mode when Enter is pressed.
 fn wait_for_enter(stop: &'static AtomicBool) {
     std::thread::spawn(move || {
-        println!("Deterium service running in the foreground. Press Enter to stop.");
+        println!("Deterium VPN service running in the foreground. Press Enter to stop.");
         let _ = std::io::stdin().read_line(&mut String::new());
         stop.store(true, Ordering::SeqCst);
     });

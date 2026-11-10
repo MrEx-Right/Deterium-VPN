@@ -160,7 +160,7 @@ impl Protection {
                 drop(old);
             }
             Err(why) => shared.push_log(format!(
-                "Deterium: couldn't let the connection reach the server OpenVPN is using ({why})"
+                "Deterium VPN: couldn't let the connection reach the server OpenVPN is using ({why})"
             )),
         }
     }
@@ -229,7 +229,7 @@ impl Shared {
             .is_some()
         {
             self.push_log(
-                "Deterium: the connection did not come up, so the temporary block was lifted and your internet access is back to normal"
+                "Deterium VPN: the connection did not come up, so the temporary block was lifted and your internet access is back to normal"
                     .to_string(),
             );
         }
@@ -692,7 +692,7 @@ fn handle_line(
             if let Some(protection) = protection {
                 if let Err(why) = protection.install(shared) {
                     shared.push_log(format!(
-                        "Deterium: couldn't install the kill switch ({why}); disconnecting rather than staying unprotected"
+                        "Deterium VPN: couldn't install the kill switch ({why}); disconnecting rather than staying unprotected"
                     ));
                     shared.set_status(TunnelStatus::Error);
                     if let Some(event) = exit_event {
@@ -701,7 +701,8 @@ fn handle_line(
                     shared.push_log(line.to_string());
                     return;
                 }
-                shared.push_log("Deterium: kill switch / leak protection is active".to_string());
+                shared
+                    .push_log("Deterium VPN: kill switch / leak protection is active".to_string());
             }
         }
         shared.set_status(status);

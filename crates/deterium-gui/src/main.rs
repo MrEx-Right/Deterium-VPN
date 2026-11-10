@@ -551,7 +551,7 @@ impl DeteriumApp {
         let mut dialog = rfd::FileDialog::new()
             .set_title("Export server")
             .set_file_name(format!("{base}.toml"))
-            .add_filter("Deterium profile", &["toml"]);
+            .add_filter("Deterium VPN profile", &["toml"]);
         dialog = match profile.protocol {
             Protocol::Wireguard => dialog.add_filter("WireGuard config", &["conf"]),
             Protocol::Openvpn => dialog.add_filter("OpenVPN config", &["ovpn"]),
@@ -765,7 +765,9 @@ fn error_detail(log: &[String]) -> Option<String> {
         line.contains("administrator") || line.contains("access is denied")
     });
     if needs_admin {
-        return Some("OpenVPN needs administrator rights — run Deterium as administrator".into());
+        return Some(
+            "OpenVPN needs administrator rights — run Deterium VPN as administrator".into(),
+        );
     }
     if log.iter().any(|line| line.contains("AUTH_FAILED")) {
         return Some(
@@ -904,7 +906,7 @@ impl DeteriumApp {
                         .sense(egui::Sense::click()),
                     )
                     .on_hover_text(format!(
-                        "Deterium {newer} is out (this is {}). To update, download the new source and run Install-Deterium.bat again. Click to open the project page.",
+                        "Deterium VPN {newer} is out (this is {}). To update, download the new source and run Install-Deterium.bat again. Click to open the project page.",
                         env!("CARGO_PKG_VERSION")
                     ))
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1058,9 +1060,9 @@ impl DeteriumApp {
                     ),
                 )
                 .on_hover_text(match (on_here, self.autostart_server) {
-                    (true, _) => "Deterium starts hidden when you sign in and connects to this server. Click to stop.",
+                    (true, _) => "Deterium VPN starts hidden when you sign in and connects to this server. Click to stop.",
                     (false, Some(_)) => "Another server connects at sign-in. Click to connect to this one instead.",
-                    (false, None) => "Starts Deterium hidden when you sign in to Windows and connects to this server. Until then the kill switch keeps holding your internet.",
+                    (false, None) => "Starts Deterium VPN hidden when you sign in to Windows and connects to this server. Until then the kill switch keeps holding your internet.",
                 })
                 .on_disabled_hover_text("Needs the background service. Install it from the sidebar first.");
             if start_button.clicked() {
@@ -1140,7 +1142,7 @@ impl DeteriumApp {
             );
             ui.add_space(6.0);
             ui.label(dim(
-                "Deterium connects you to a server you control or subscribe to.",
+                "Deterium VPN connects you to a server you control or subscribe to.",
             ));
             ui.label(dim("No accounts, no tracking, nothing hosted by us."));
             ui.add_space(24.0);
@@ -1395,13 +1397,13 @@ impl DeteriumApp {
         };
         self.autostart_server = autostart::enabled_for();
         self.toast = Some(match result {
-            Ok(()) if turning_off => toast("Deterium will no longer start with Windows", GOOD),
+            Ok(()) if turning_off => toast("Deterium VPN will no longer start with Windows", GOOD),
             Ok(()) => {
                 let name = self
                     .profile(id)
                     .map_or_else(String::new, |p| p.profile.name.clone());
                 toast(
-                    format!("Deterium will connect to \"{name}\" when you sign in to Windows"),
+                    format!("Deterium VPN will connect to \"{name}\" when you sign in to Windows"),
                     GOOD,
                 )
             }
@@ -1484,7 +1486,7 @@ impl DeteriumApp {
                 self.newer = newer;
                 if let (Some(version), None) = (newer, &self.toast) {
                     self.toast = Some(toast(
-                        format!("Deterium {version} is out. See the bottom of the sidebar"),
+                        format!("Deterium VPN {version} is out. See the bottom of the sidebar"),
                         ACCENT,
                     ));
                 }
@@ -1673,7 +1675,7 @@ impl DeteriumApp {
                 ui.label(RichText::new(text).color(color).strong());
                 ui.add_space(6.0);
                 ui.label(
-                    "The service runs the VPN in the background. With it, Deterium never \
+                    "The service runs the VPN in the background. With it, Deterium VPN never \
                      asks for administrator rights again, the VPN stays up when you close this \
                      window, and the kill switch keeps protecting you even if the app crashes.",
                 );
@@ -1744,7 +1746,7 @@ impl DeteriumApp {
                 );
                 ui.add_space(4.0);
                 ui.label(dim(format!(
-                    "Deterium will restart with a Windows permission prompt and connect to \
+                    "Deterium VPN will restart with a Windows permission prompt and connect to \
                      \"{}\" for you.",
                     stored.profile.name
                 )));
@@ -1756,7 +1758,7 @@ impl DeteriumApp {
                             .strong(),
                     );
                     ui.label(dim(
-                        "One Windows permission prompt, once. After that Deterium needs no \
+                        "One Windows permission prompt, once. After that Deterium VPN needs no \
                          administrator rights, and the kill switch keeps working even if the \
                          window is closed.",
                     ));

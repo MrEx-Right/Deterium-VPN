@@ -1,4 +1,4 @@
-# Third-party software shipped inside `Deterium.exe`
+# Third-party software shipped inside `Deterium VPN.exe`
 
 Deterium's own code is not covered by this file. The release executable also
 contains the following unmodified third-party programs, run as separate

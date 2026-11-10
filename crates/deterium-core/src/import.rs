@@ -14,12 +14,12 @@ pub enum ImportError {
     #[error("the config is empty")]
     Empty,
     #[error(
-        "this doesn't look like a WireGuard (.conf), OpenVPN (.ovpn) or Deterium (.toml) profile"
+        "this doesn't look like a WireGuard (.conf), OpenVPN (.ovpn) or Deterium VPN (.toml) profile"
     )]
     Unrecognized,
     #[error("the WireGuard config has no [Interface] section")]
     MissingInterface,
-    #[error("invalid Deterium profile: {0}")]
+    #[error("invalid Deterium VPN profile: {0}")]
     Deterium(#[from] ProfileError),
 }
 
@@ -207,7 +207,7 @@ pub fn parse_wireguard_conf(text: &str, name_hint: &str) -> Result<Imported, Imp
     }
     if peers.len() > 1 {
         warnings.push(format!(
-            "Found {} peers; Deterium connects to one server, so only the first was kept",
+            "Found {} peers; Deterium VPN connects to one server, so only the first was kept",
             peers.len()
         ));
     }

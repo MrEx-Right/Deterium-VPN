@@ -113,7 +113,7 @@ impl RemoteTunnel {
             .lost_contact;
         let mut lines = self.mine().map(|a| a.log).unwrap_or_default();
         if lost {
-            lines.push("lost contact with the Deterium background service".into());
+            lines.push("lost contact with the Deterium VPN background service".into());
         }
         lines
     }

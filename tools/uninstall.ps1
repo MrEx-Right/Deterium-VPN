@@ -1,12 +1,13 @@
-# Removes what tools/install.ps1 put on this PC: Deterium.exe, the Start Menu
+# Removes what tools/install.ps1 put on this PC: "Deterium VPN.exe", the Start Menu
 # shortcut, the Settings > Apps entry and (with your permission prompt) the
 # background service. Your servers in %APPDATA%\Deterium are kept unless you
 # pass -RemoveData.
 #
-#   pwsh ./uninstall.ps1 [-InstallDir <folder with Deterium.exe>] [-RemoveData] [-KeepService]
+#   pwsh ./uninstall.ps1 [-InstallDir <folder with Deterium VPN.exe>] [-RemoveData] [-KeepService]
 #
-# Only Deterium.exe and this script's own folder are deleted, never the folder
-# Deterium.exe was in (by default that is your Desktop).
+# Only "Deterium VPN.exe" (or the older Deterium.exe) and this script's own
+# folder are deleted, never the folder the app was in (by default that is your
+# Desktop).
 
 param(
     [switch]$RemoveData,
@@ -15,23 +16,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$exe = Join-Path $InstallDir "Deterium.exe"
+$exe = Join-Path $InstallDir "Deterium VPN.exe"
+# Up to 0.5.0 the file was called Deterium.exe: remove that one too, and use it
+# for the service step if it is the only copy left.
+$legacy = Join-Path $InstallDir "Deterium.exe"
+if (-not (Test-Path $legacy) -or (Get-Item $legacy).VersionInfo.ProductName -ne "Deterium VPN") { $legacy = $null }
+$tool = if (Test-Path $exe) { $exe } else { $legacy }
 
 # The service lives in Program Files and needs administrator rights to remove.
 # The app's own command does it, so the tunnel is torn down cleanly first.
-if ((Test-Path $exe) -and -not $KeepService) {
-    $status = (& $exe service status 2>$null | Out-String).Trim()
+if ($tool -and -not $KeepService) {
+    $status = (& $tool service status 2>$null | Out-String).Trim()
     if ($status -match "^installed") {
         Write-Host "Removing the background service (a permission prompt will appear)..."
-        $p = Start-Process -FilePath $exe -ArgumentList "service", "uninstall" -Verb RunAs -Wait -PassThru
+        $p = Start-Process -FilePath $tool -ArgumentList "service", "uninstall" -Verb RunAs -Wait -PassThru
         if ($p.ExitCode -ne 0) {
-            Write-Host "The service wasn't removed (exit code $($p.ExitCode)). Remove it from Deterium: Background service > Remove, then run this again." -ForegroundColor Red
+            Write-Host "The service wasn't removed (exit code $($p.ExitCode)). Remove it from Deterium VPN: Background service > Remove, then run this again." -ForegroundColor Red
             exit 1
         }
     }
 }
 
-Get-Process -Name "Deterium" -ErrorAction SilentlyContinue |
+Get-Process -Name "Deterium VPN", "Deterium" -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -and ($_.Path -like "$InstallDir*") } |
     ForEach-Object { $_.CloseMainWindow() | Out-Null; Start-Sleep -Milliseconds 800; if (-not $_.HasExited) { $_.Kill() } }
 
@@ -46,12 +52,14 @@ if ($RemoveData) {
     if (Test-Path $data) { Remove-Item $data -Recurse -Force; Write-Host "Removed your saved servers ($data)." }
 }
 
-# Only the one file we installed. $InstallDir itself (the Desktop by default) stays.
-if (Test-Path $exe) {
-    try { Remove-Item $exe -Force -ErrorAction Stop }
-    catch {
-        Write-Host "Couldn't delete $exe. Close Deterium (also from the tray icon) and run this again." -ForegroundColor Red
-        exit 1
+# Only the file we installed. $InstallDir itself (the Desktop by default) stays.
+foreach ($file in @($exe, $legacy)) {
+    if ($file -and (Test-Path $file)) {
+        try { Remove-Item $file -Force -ErrorAction Stop }
+        catch {
+            Write-Host "Couldn't delete $file. Close Deterium VPN (also from the tray icon) and run this again." -ForegroundColor Red
+            exit 1
+        }
     }
 }
 
@@ -68,4 +76,4 @@ if ($PSScriptRoot.TrimEnd('\') -ieq $supportDir -or (Test-Path (Join-Path $PSScr
 $lines += "del `"%~f0`""
 Set-Content -Path $cleanup -Value $lines -Encoding ASCII
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$cleanup`"" -WindowStyle Hidden
-Write-Host "Deterium was removed."
+Write-Host "Deterium VPN was removed."

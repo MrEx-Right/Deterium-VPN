@@ -92,7 +92,7 @@ PostUp = sysctl -w net.ipv4.ip_forward=1; iptables -t nat -A POSTROUTING -s {nat
 PostDown = iptables -t nat -D POSTROUTING -s {nat_subnet} -o $OUT_IF -j MASQUERADE; iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT
 
 [Peer]
-# Your Deterium client
+# Your Deterium VPN client
 PublicKey = {client_key}
 AllowedIPs = {client_address}
 EOF
@@ -105,7 +105,7 @@ systemctl enable --now wg-quick@{iface} >/dev/null 2>&1 || true
 systemctl restart wg-quick@{iface}
 
 echo
-echo "Done. Paste this server public key into Deterium:"
+echo "Done. Paste this server public key into Deterium VPN:"
 echo
 echo "    SERVER PUBLIC KEY: $(cat /etc/wireguard/{iface}_public.key)"
 echo

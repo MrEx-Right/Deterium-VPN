@@ -121,7 +121,7 @@ pub fn show_chooser(ui: &mut egui::Ui, can_cancel: bool) -> ChooserAction {
         }
     });
     ui.label(dim(
-        "Deterium never hosts servers. Use one you rent, one you run, or one from a VPN subscription.",
+        "Deterium VPN never hosts servers. Use one you rent, one you run, or one from a VPN subscription.",
     ));
     ui.add_space(16.0);
 
@@ -129,7 +129,7 @@ pub fn show_chooser(ui: &mut egui::Ui, can_cancel: bool) -> ChooserAction {
         if choice_card(
             &mut cols[0],
             "Set up my own server",
-            "Rent any VPS, paste one generated script into it, and Deterium creates \
+            "Rent any VPS, paste one generated script into it, and Deterium VPN creates \
              the keys and the profile for you.",
             "RECOMMENDED",
         ) {
@@ -138,7 +138,7 @@ pub fn show_chooser(ui: &mut egui::Ui, can_cancel: bool) -> ChooserAction {
         if choice_card(
             &mut cols[1],
             "Import a config file",
-            "A WireGuard .conf, OpenVPN .ovpn or Deterium .toml from your VPN \
+            "A WireGuard .conf, OpenVPN .ovpn or Deterium VPN .toml from your VPN \
              provider or an existing server.",
             "",
         ) {
@@ -384,7 +384,7 @@ fn import_bar(ui: &mut egui::Ui, st: &mut EditorState) {
         }
     });
     ui.label(dim(
-        "Fill the form from a WireGuard .conf, OpenVPN .ovpn or Deterium .toml.",
+        "Fill the form from a WireGuard .conf, OpenVPN .ovpn or Deterium VPN .toml.",
     ));
 
     let mut import_now = None;
@@ -710,7 +710,7 @@ fn protection_card(ui: &mut egui::Ui, st: &mut EditorState) {
         section_title(ui, "Leak protection");
         ui.label(dim(
             "Firewall rules that keep traffic inside the tunnel. They exist only while \
-             connected, and Windows removes them by itself if Deterium ever closes or crashes.",
+             connected, and Windows removes them by itself if Deterium VPN ever closes or crashes.",
         ));
         ui.add_space(8.0);
 
@@ -778,7 +778,7 @@ fn openvpn_card(ui: &mut egui::Ui, st: &mut EditorState, fields: &Fields) {
             _ if deterium_engine::bundled_available() => {
                 ui.label(
                     RichText::new(format!(
-                        "OpenVPN {} is built into Deterium - nothing to install.",
+                        "OpenVPN {} is built into Deterium VPN - nothing to install.",
                         deterium_engine::bundled_version().unwrap_or_default()
                     ))
                     .size(12.5)

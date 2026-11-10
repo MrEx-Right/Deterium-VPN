@@ -128,11 +128,11 @@ mod imp {
         pub fn new(ctx: &egui::Context) -> Option<Self> {
             let actions: Arc<Mutex<Vec<Action>>> = Arc::default();
 
-            let open = MenuItem::new("Open Deterium", true, None);
+            let open = MenuItem::new("Open Deterium VPN", true, None);
             let status = MenuItem::new("Not connected", false, None);
             let toggle = MenuItem::new("Connect", true, None);
             let servers = Submenu::new("Connect to", false);
-            let quit = MenuItem::new("Quit Deterium", true, None);
+            let quit = MenuItem::new("Quit Deterium VPN", true, None);
             let menu = Menu::new();
             menu.append_items(&[
                 &open,
